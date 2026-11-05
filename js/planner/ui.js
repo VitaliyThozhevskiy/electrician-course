@@ -28,7 +28,7 @@
   }
 
   // ---------- стан ----------
-  var proj = null, photo = null, ui = { tab: "flat", layer: "ceiling", tool: "select", tour: -1, wallRoom: null, wall: "N", showRoutes: true, gfilter: "" }, live = { on: false, sw: {}, brk: {} };
+  var proj = null, photo = null, ui = { tab: "flat", layer: "ceiling", tool: "select", tour: -1, wallRoom: null, wall: "N", showRoutes: true, gfilter: "" }, live = { on: false, sw: {}, brk: {} }, multi = [];
   var sel = null, view = null, wview = null, host = null, saveT = null, calib = null, drawRect = null;
   function load() {
     try { var s = JSON.parse(lsGet(KEY)); if (s && s.rooms) proj = P.normalize(s); } catch (e) {}
@@ -129,10 +129,33 @@
       '<button type="button" data-tool="room" class="' + (ui.tool === "room" ? "on" : "") + '">▭ Намалювати кімнату</button>' +
       '<label class="pl-barbtn">🖼 Фото плану<input type="file" accept="image/*" data-act="photo" hidden></label>' +
       (photo ? '<button type="button" data-tool="calib" class="' + (ui.tool === "calib" ? "on" : "") + '">📏 Масштаб фото</button><label class="pl-barbtn">Прозорість <input type="range" min="10" max="100" value="' + Math.round((photo.op || 0.5) * 100) + '" data-act="photoop"></label><button type="button" data-act="photodel">Прибрати фото</button>' : "") +
-      zoomBtns() + "</div>" +
+      lockBtn() + zoomBtns() + "</div>" +
       (ui.tool === "calib" ? '<p class="pl-help">Клікни дві точки на фото, між якими знаєш реальну відстань (наприклад, довжину стіни), — потім введи її в сантиметрах.</p>' : "") +
       (ui.tool === "room" ? '<p class="pl-help">Протягни прямокутник по плану (або по фото) — з\'явиться нова кімната. Внутрішні розміри потім уточни цифрами справа.</p>' : "");
   }
+  // ---------- стандарт висот (від чистої підлоги) ----------
+  var stdH = { sw: 90, socket: 30 };
+  function nearDoor(t) {
+    var r = P.byId(proj.rooms, t.room); if (!r || !t.wall) return false;
+    return P.openingsOn(proj, r, t.wall).some(function (o) { return o.kind === "door" && t.pos > o.pos - 45 && t.pos < o.pos + o.width + 45; });
+  }
+  function stdTargets(kind) {
+    return proj.points.filter(function (t) {
+      if (kind === "sw") return P.KINDS[t.kind].cat === "switch" && nearDoor(t);
+      return t.kind === "socket" && t.h < 60;
+    });
+  }
+  function heightsCard() {
+    var sw = stdTargets("sw"), so = stdTargets("so"), swOff = sw.filter(function (t) { return t.h !== stdH.sw; }).length, soOff = so.filter(function (t) { return t.h !== stdH.socket; }).length;
+    var rows = [["Розетки загального призначення", "300 мм", "іноді 200–400 під меблі"], ["Вимикачі", "900 мм", "буває 750–1000; з боку ручки, 100–150 мм від одвірка"], ["Розетки над стільницею", "~1100 мм", "150–250 мм над стільницею"],
+      ["Біля ліжка", "600–700 мм", "над тумбою"], ["ТВ-зона", "1100–1300 мм", "за кронштейном"], ["Пральна машина", "1000–1100 мм", "збоку, не за машиною"], ["Кондиціонер", "2000–2200 мм", "збоку від блока"], ["Витяжка", "2000–2300 мм", "за кресленням кухні"]];
+    return '<div class="card pl-card"><h3>Висоти точок</h3><p class="meta">Жорстко обов\'язкових висот для житла мало — це домовленість із замовником. Головне — однаково по всій квартирі. Висоти — від <b>чистої</b> підлоги (стяжка + покриття).</p>' +
+      '<table class="pl-tbl pl-htbl"><tr><th>Точка</th><th>Як правило</th><th>Примітка</th></tr>' + rows.map(function (x) { return "<tr><td>" + x[0] + "</td><td class='pl-nowrap'>" + x[1] + "</td><td class='meta'>" + x[2] + "</td></tr>"; }).join("") + "</table>" +
+      '<div class="row"><button type="button" class="btn small" data-act="stdh" data-v="sw"' + (swOff ? "" : " disabled") + '>Вимикачі біля дверей → 90 см' + (swOff ? " (" + swOff + ")" : " ✓") + '</button>' +
+      '<button type="button" class="btn small" data-act="stdh" data-v="so"' + (soOff ? "" : " disabled") + '>Низькі розетки → 30 см' + (soOff ? " (" + soOff + ")" : " ✓") + "</button></div>" +
+      "<p class='meta'>Кнопки не чіпають розетки над стільницею, біля ліжка, за ТВ і вимикачі біля ліжка — у них свої висоти.</p>" + hint("heights") + "</div>";
+  }
+  function lockBtn() { return '<button type="button" data-act="lock" class="pl-lock' + (proj && proj.locked ? " on" : "") + '" title="Заборонити перетягування кімнат, точок і щита">' + (proj && proj.locked ? "🔒 Заблоковано" : "🔓 Блокувати рух") + "</button>"; }
   function zoomBtns() { return '<span class="pl-zoom"><button type="button" data-act="zin" title="Збільшити">＋</button><button type="button" data-act="zout" title="Зменшити">－</button><button type="button" data-act="zfit" title="Вмістити">⤢</button></span>'; }
   function flatSide() {
     var h = '<div class="card pl-card"><h3>Проєкт</h3>' + inp("proj", "", "name", proj.name, { label: "Назва", str: true }) + inp("proj", "", "ceilH", proj.ceilH, { label: "Висота стелі (чистова)", unit: "см" }) +
@@ -143,6 +166,7 @@
       '<div class="row"><button type="button" class="btn" data-act="auto">⚡ Авторозстановка</button></div><p class="meta">Розставить світло, вимикачі, розетки, коробки і групи за типовими правилами. Поточні точки буде замінено.</p>' +
       '<div class="row"><button type="button" class="btn ghost small" data-act="export">⬇ Зберегти файл</button><label class="btn ghost small pl-file">⬆ Відкрити файл<input type="file" accept=".json,application/json" data-act="import" hidden></label><button type="button" class="btn ghost small" data-act="new">Новий проєкт</button></div></div>';
     var r = sel && sel.t === "room" ? P.byId(proj.rooms, sel.id) : null;
+    if (!r) h += heightsCard();
     if (!r) h += '<div class="card pl-card"><h3>Кімнати</h3><p class="meta">Клікни кімнату на плані, щоб змінити її, або намалюй нову.</p><ul class="pl-list">' + proj.rooms.map(function (q) { return '<li><a href="javascript:void 0" data-act="selroom" data-id="' + q.id + '">' + esc(q.name) + "</a> <span class='meta'>" + nfm(q.w) + "×" + nfm(q.h) + " м</span></li>"; }).join("") + '</ul><button type="button" class="btn ghost small" data-act="addroom">+ Кімната</button></div>';
     else {
       h += '<div class="card pl-card"><h3>' + esc(r.name) + "</h3>" + inp("room", r.id, "name", r.name, { label: "Назва", str: true }) +
@@ -227,7 +251,7 @@
       var bad = {}; c.issues.forEach(function (i) { if (i.ref) bad[i.ref] = bad[i.ref] === "error" ? "error" : i.lvl; });
       proj.points.forEach(function (t) {
         var q = ptXY(t); if (!q) return;
-        var on = sel && sel.t === "point" && sel.id === t.id, isC = P.KINDS[t.kind].surf === "ceiling";
+        var on = (sel && sel.t === "point" && sel.id === t.id) || multi.indexOf(t.id) >= 0, isC = P.KINDS[t.kind].surf === "ceiling";
         var dv = P.device && P.device(t.device), isAC = !!(dv && dv.ac);
         var dim = !live.on && !isAC && ((ui.layer === "ceiling" && !isC) || (ui.layer === "walls" && isC));
         var lc = live.on ? liveCls(t) : "";
@@ -247,11 +271,25 @@
     if ((s.ctl || []).some(function (c) { return c.sw === t.id; })) return true;
     return false;
   }
+  // кабелі від щита до точки (по порядку) і кабелі, що йдуть від неї далі
+  function cablePath(id, segs) {
+    var chain = [], cur = id, guard = 0;
+    while (cur !== "panel" && guard++ < 60) { var s = segs.filter(function (x) { return x.b === cur; })[0]; if (!s) break; chain.unshift(s); cur = s.a; }
+    return { up: chain, down: segs.filter(function (x) { return x.a === id; }) };
+  }
+  function hlKeys(segs) {
+    if (!sel) return null;
+    if (sel.t === "seg") { var o = {}; o[sel.id] = 1; return o; }
+    if (sel.t !== "point") return null;
+    var cp = cablePath(sel.id, segs), k = {};
+    cp.up.concat(cp.down).forEach(function (s) { k[s.key] = 1; });
+    return Object.keys(k).length ? k : null;
+  }
   function routesSvg(segs, s) {
-    var h = '<g class="pl-routes">';
+    var h = '<g class="pl-routes">', hk = live.on ? null : hlKeys(segs);
     segs.forEach(function (g) {
       if (ui.gfilter && g.group !== ui.gfilter) return;
-      var col = gcolor(g.group), cls = "pl-route p-" + g.plane, off = g.plane === "wallBottom" ? 22 : 6 + (proj.groups.findIndex(function (x) { return x.id === g.group; }) % 4) * 2.5;
+      var col = gcolor(g.group), cls = "pl-route p-" + g.plane + (hk ? (hk[g.key] ? " hl" : " fade") : ""), off = g.plane === "wallBottom" ? 22 : 6 + (proj.groups.findIndex(function (x) { return x.id === g.group; }) % 4) * 2.5;
       var hit = ' data-seg="' + esc(g.key) + '"';
       if (g.line) h += '<line' + hit + ' x1="' + g.line[0][0] + '" y1="' + g.line[0][1] + '" x2="' + g.line[1][0] + '" y2="' + g.line[1][1] + '" class="' + cls + '" style="stroke:' + col + '"/>';
       g.pieces.forEach(function (pc) {
@@ -274,7 +312,7 @@
       (true ? '<button type="button" data-tool="ac" class="' + (ui.tool === "ac" ? "on" : "") + '">+ Кондиціонер</button>' : "") +
       '<button type="button" data-act="live" class="pl-livebtn' + (live.on ? " on" : "") + '">' + (live.on ? "✕ Зняти напругу" : "🔌 Під напругою") + "</button>" +
       (ui.layer === "walls" ? '<button type="button" data-tool="panel" class="' + (ui.tool === "panel" ? "on" : "") + '">Щит сюди</button>' : "") +
-      '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button>' + zoomBtns() + "</div>" +
+      '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button>' + '<button type="button" data-act="msel" class="' + (ui.msel ? "on" : "") + '" title="Виділяти кілька точок дотиком (на ПК — Shift/Ctrl + клік або рамка з Shift)">⬚ Кілька</button>' + lockBtn() + zoomBtns() + "</div>" +
       '<div class="pl-bar pl-bar2"><label class="pl-barbtn"><input type="checkbox" data-act="routes"' + (ui.showRoutes ? " checked" : "") + "> Траси</label>" +
       '<label class="pl-barbtn">Група <select data-act="gfilter"><option value="">усі</option>' + proj.groups.map(function (g) { return '<option value="' + g.id + '"' + (ui.gfilter === g.id ? " selected" : "") + ">" + esc(g.name) + "</option>"; }).join("") + "</select></label>" +
       '<span class="pl-legend"><i class="lg-wall"></i>по стіні <i class="lg-ceil"></i>по стелі <i class="lg-floor"></i>по підлозі <i class="lg-hole"></i>отвір у стіні</span></div>' +
@@ -365,6 +403,61 @@
     return h;
   }
 
+  function wname(rid, w) { var r = P.byId(proj.rooms, rid); return (r ? r.name : "?") + ", " + P.WALL_NAME[w] + " стіна"; }
+  function cm(v) { return P.nf(v, 0) + " см"; }
+  function segSteps(s) {
+    var C = proj.ceilH, out = [], v = s.verts || [];
+    function vert(x, first, ceilEnd) {
+      if (ceilEnd) { out.push("↕ Підйом до стелі: " + wname(x.room, x.wall) + ", " + cm(x.pos) + " від лівого кута — від траси вгору до стелі, далі по стелі до світильника."); return; }
+      var up = first ? (s.a === "panel" ? "від щита вгору" : "від точки вгору") : "вниз до точки";
+      if (s.plane === "floor") up = first ? "від точки вниз до підлоги" : "від підлоги вгору до точки";
+      out.push("↕ Вертикальна штроба: " + wname(x.room, x.wall) + ", " + cm(x.pos) + " від лівого кута — " + up + ", між " + cm(x.z0) + " і " + cm(x.z1) + " від підлоги.");
+    }
+    if (s.line) {
+      if (v[0] && v[0].room && sameEnd(v[0], s.a)) vert(v[0], true);
+      out.push((s.plane === "ceiling" ? "↗ По стелі навпрост у гофрі" : "↗ По підлозі навпрост у гофрі під стяжку") + ", " + P.nf(s.horiz / 100) + " м." + (s.plane === "ceiling" ? " Кліпси через 30–40 см." : ""));
+      var vb = v.filter(function (x) { return sameEnd(x, s.b); })[0]; if (vb) vert(vb, false);
+      if (s.ceilStub && s.plane !== "ceiling") out.push("↗ До світильника — по стелі від стіни до точки на стелі.");
+      return out;
+    }
+    var va = v[0], vb2 = v[1], EA = P.endpoint(proj, s.a), EB = P.endpoint(proj, s.b);
+    if (va) vert(va, true, EA && EA.ceiling);
+    if (EA && EA.ceiling) out.push("↗ Від світильника по стелі до стіни — у гофрі.");
+    var merged = [];
+    (s.pieces || []).forEach(function (pc) {
+      var lo = Math.min(pc.p0, pc.p1), hi = Math.max(pc.p0, pc.p1), m = merged[merged.length - 1];
+      if (m && m.room === pc.room && m.wall === pc.wall) { m.lo = Math.min(m.lo, lo); m.hi = Math.max(m.hi, hi); m.len += hi - lo; }
+      else merged.push({ room: pc.room, wall: pc.wall, z: pc.z, lo: lo, hi: hi, len: hi - lo });
+    });
+    var prevRoom = EA && EA.room ? EA.room.id : null;
+    merged.forEach(function (m, i) {
+      if (prevRoom && m.room !== prevRoom) {
+        var h0 = (s.holes || []).filter(function (o) { return o.from === prevRoom && o.to === m.room; })[0];
+        if (h0) out.push("⊙ Отвір у стіні: " + P.byId(proj.rooms, h0.from).name + " → " + P.byId(proj.rooms, h0.to).name + ", на висоті " + cm(h0.z) + ".");
+      }
+      prevRoom = m.room;
+      if (m.len >= 1) out.push("↔ Горизонталь: " + wname(m.room, m.wall) + ", " + (s.plane === "wallTop" ? cm(C - m.z) + " нижче стелі" : cm(m.z) + " від підлоги") + ", від " + cm(m.lo) + " до " + cm(m.hi) + " від лівого кута (" + P.nf(m.len / 100) + " м).");
+      var nx = merged[i + 1];
+      if (nx && nx.room === m.room && m.len >= 1) out.push("↱ Поворот у кут на сусідню стіну.");
+    });
+    if (vb2) vert(vb2, false, EB && EB.ceiling);
+    if (EB && EB.ceiling) out.push("↗ Від стіни по стелі до світильника — у гофрі, з запасом кабелю 20–30 см.");
+    return out;
+  }
+  function sameEnd(v, ref) { var e = P.endpoint(proj, ref); return e && !e.ceiling && e.room.id === v.room && e.wall === v.wall && Math.abs(e.pos - v.pos) < 1; }
+  function pathHtml(t) {
+    var segs = calc().segs, cp = cablePath(t.id, segs);
+    if (!cp.up.length && !cp.down.length) return "";
+    function one(s, n) {
+      return '<li><a href="javascript:void 0" data-act="selseg" data-id="' + esc(s.key) + '"><b>' + (n ? n + ". " : "") + esc(P.labelRef(proj, s.a)) + " → " + esc(P.labelRef(proj, s.b)) + "</b></a>" +
+        '<div class="meta">' + s.cable + " · " + P.nf(s.len / 100) + " м · " + esc(P.PLANES[s.plane]) + "</div><ul>" + segSteps(s).map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul></li>";
+    }
+    var tot = cp.up.reduce(function (a, s) { return a + s.len; }, 0);
+    return '<details class="pl-path" open><summary>🧭 Де йде кабель' + (cp.up.length ? " · від щита " + P.nf(tot / 100) + " м" : "") + "</summary>" +
+      (cp.up.length ? "<p class='meta'>Від щита до цієї точки, по порядку. На плані підсвічено, решта трас бліді.</p><ol class='pl-pathl'>" + cp.up.map(function (s, i) { return one(s, i + 1); }).join("") + "</ol>" : "") +
+      (cp.down.length ? "<p class='meta'>Далі від цієї точки:</p><ul class='pl-pathl'>" + cp.down.map(function (s) { return one(s, 0); }).join("") + "</ul>" : "") + "</details>";
+  }
+
   function defaultGroup(t) {
     var cat = P.KINDS[t.kind].cat;
     if (cat === "light" || cat === "switch" || cat === "box") { var g = proj.groups.filter(function (x) { return x.kind === "light"; })[0]; return g ? g.id : null; }
@@ -376,7 +469,20 @@
     return null;
   }
 
+  function multiSide() {
+    var pts = multi.map(function (mid) { return P.byId(proj.points, mid); }).filter(Boolean), walls = pts.filter(function (t) { return t.wall; }), ceil = pts.filter(function (t) { return t.x != null; });
+    var gs = {}; pts.forEach(function (t) { gs[t.group || ""] = 1; }); var g1 = Object.keys(gs).length === 1 ? Object.keys(gs)[0] : "__";
+    return '<div class="card pl-card"><h3>Виділено: ' + pts.length + "</h3>" +
+      "<p class='meta'>" + (proj.locked ? "Рух заблоковано — зніми 🔒, щоб перетягувати." : "Тягни будь-яку з виділених — усі переміщуються разом. Точки на стіні їдуть уздовж своєї стіни, на стелі — вільно.") + "</p>" +
+      '<ul class="pl-ul">' + pts.map(function (t) { return "<li>" + esc(P.labelRef(proj, t.id)) + "</li>"; }).join("") + "</ul>" +
+      '<label class="pl-f"><span>Група для всіх</span><select data-act="mgroup">' + (g1 === "__" ? '<option value="__" selected>— різні —</option>' : "") + '<option value=""' + (g1 === "" ? " selected" : "") + '>— без групи —</option>' +
+      proj.groups.map(function (g) { return '<option value="' + g.id + '"' + (g1 === g.id ? " selected" : "") + ">" + esc(g.name) + "</option>"; }).join("") + "</select></label>" +
+      (walls.length ? '<div class="pl-grid2"><label class="pl-f"><span>Висота для точок на стіні</span><input class="pl-mh" inputmode="decimal" value="' + (walls[0].h || "") + '"><em>см</em></label><div class="row"><button type="button" class="btn small" data-act="mheight">Задати ' + walls.length + " шт.</button></div></div>" : "") +
+      (ceil.length > 1 ? '<div class="row"><button type="button" class="btn ghost small" data-act="malign" data-v="y">⇔ В одну лінію (горизонтально)</button><button type="button" class="btn ghost small" data-act="malign" data-v="x">⇕ В одну лінію (вертикально)</button></div>' : "") +
+      '<div class="row"><button type="button" class="btn ghost small" data-act="munsel">Зняти виділення</button><button type="button" class="btn ghost small pl-danger" data-act="mdel">Видалити виділені</button></div></div>';
+  }
   function pointSide() {
+    if (multi.length > 1) return multiSide();
     var c = calc();
     if (sel && sel.t === "panel") return '<div class="card pl-card"><h3>Щит</h3>' + panelFields() + hint("panel", true) + "</div>";
     var t = sel && sel.t === "point" ? P.byId(proj.points, sel.id) : null;
@@ -414,7 +520,7 @@
     // кабель до точки
     var seg = c.segs.filter(function (s) { return s.b === t.id; })[0];
     if (seg) h += "<h4>Кабель до точки</h4><p>Від «" + esc(P.labelRef(proj, seg.a)) + "»: <b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м</p>" + planeSel(seg);
-    h += connHtml(t) + hint(hintKey(t)) + (function () { var rr = P.byId(proj.rooms, t.room); return rr && (rr.type === "bath" || rr.type === "wc") ? hint("bath") : ""; })() + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
+    h += pathHtml(t) + connHtml(t) + hint(hintKey(t)) + (function () { var rr = P.byId(proj.rooms, t.room); return rr && (rr.type === "bath" || rr.type === "wc") ? hint("bath") : ""; })() + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
     return h;
   }
   function hintKey(t) { return t.kind; }
@@ -623,6 +729,23 @@
     if (a === "lsw") { var lk = id + ":" + b.dataset.v; live.sw[lk] = live.sw[lk] ? 0 : 1; draw(); return; }
     if (a === "lbrk") { live.brk[id] = isOn(id) ? 0 : 1; draw(); return; }
     if (a === "ltest") { live.brk[id] = 0; live.msg = b.dataset.v === "rcbo" ? "Диф. автомат спрацював від кнопки «ТЕСТ» — механізм справний. Увімкни його знову." : "ПЗВ спрацював від кнопки «ТЕСТ» — механізм справний. Усе під ним знеструмлено. Увімкни ПЗВ знову."; draw(); return; }
+    if (a === "lock") { proj.locked = !proj.locked; changed(); return; }
+    if (a === "msel") { ui.msel = !ui.msel; if (ui.msel) { multi = []; sel = null; } else if (multi.length < 2) multi = []; draw(); return; }
+    if (a === "munsel") { multi = []; draw(); return; }
+    if (a === "mdel") { if (!confirm("Видалити " + multi.length + " точок?")) return; proj.points = proj.points.filter(function (t) { return multi.indexOf(t.id) < 0; }); proj.points.forEach(function (t) { if (t.ctl) t.ctl = t.ctl.filter(function (c) { return multi.indexOf(c.sw) < 0; }); }); multi = []; sel = null; changed(); return; }
+    if (a === "mheight") { var hv = num(host.querySelector(".pl-mh").value); if (!(hv > 0)) return; multi.forEach(function (mid) { var t = P.byId(proj.points, mid); if (t && t.wall) t.h = hv; }); changed(); return; }
+    if (a === "malign") {
+      var pts = multi.map(function (mid) { return P.byId(proj.points, mid); }).filter(Boolean), cs = pts.filter(function (t) { return t.x != null; });
+      if (b.dataset.v === "x" && cs.length) { var ax = snap(cs.reduce(function (s2, t) { return s2 + t.x; }, 0) / cs.length); cs.forEach(function (t) { t.x = ax; }); }
+      if (b.dataset.v === "y" && cs.length) { var ay = snap(cs.reduce(function (s2, t) { return s2 + t.y; }, 0) / cs.length); cs.forEach(function (t) { t.y = ay; }); }
+      changed(); return;
+    }
+    if (a === "stdh") {
+      var cnt0 = 0;
+      stdTargets(b.dataset.v).forEach(function (t) { t.h = b.dataset.v === "sw" ? stdH.sw : stdH.socket; cnt0++; });
+      if (!cnt0) return; changed(); return;
+    }
+    if (a === "selseg") { sel = { t: "seg", id: id }; draw(); return; }
     if (a === "lalloff") { live.sw = {}; draw(); return; }
     if (a === "tpl") { setProj(P.template(b.dataset.v)); ui.tab = "flat"; draw(); return; }
     if (a === "desc") {
@@ -684,6 +807,7 @@
     if (a === "gfilter") { ui.gfilter = el.value; draw(); return; }
     if (a === "wroom") { ui.wallRoom = el.value; ui.wall = busiestWall(P.byId(proj.rooms, el.value)); sel = null; save(); draw(); return; }
     if (a === "stepdone") { proj.done = proj.done || {}; proj.done[el.dataset.id] = el.checked; save(); draw(); return; }
+    if (a === "mgroup") { multi.forEach(function (mid) { var t2 = P.byId(proj.points, mid); if (t2 && t2.kind !== "jbox") t2.group = el.value || null; }); changed(); return; }
     if (a === "ctl") {
       var t = P.byId(proj.points, el.dataset.id); t.ctl = t.ctl || [];
       if (el.checked) t.ctl.push({ sw: el.dataset.sw, key: 1 }); else t.ctl = t.ctl.filter(function (c) { return c.sw !== el.dataset.sw; });
@@ -761,6 +885,14 @@
       var tool = ui.tool;
       try { svg.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault();
+      if (proj.locked && tool === "select" && !live.on) {
+        if (ptg) { sel = { t: "point", id: ptg.dataset.pt }; multi = []; draw(); return; }
+        if (pg) { sel = { t: "panel" }; draw(); return; }
+        if (sg && !elev) { sel = { t: "seg", id: sg.dataset.seg }; draw(); return; }
+        if (!elev && ui.tab === "flat" && rg) { sel = { t: "room", id: rg.dataset.room }; draw(); return; }
+        if (elev) { sel = null; draw(); return; }
+        drag = { kind: "pan", c0: [e.clientX, e.clientY], v0: view || bounds(), moved: false }; return;
+      }
       if (elev) { elevDown(q, ptg, pg, sg); return; }
       if (live.on) { if (ptg) { liveTap(ptg.dataset.pt); return; } drag = { kind: "pan", c0: [e.clientX, e.clientY], v0: view || bounds(), moved: false }; return; }
       if (tool === "calib") { calib = (calib || []).concat([q]); if (calib.length === 2) { var d = Math.hypot(calib[1][0] - calib[0][0], calib[1][1] - calib[0][1]); var real = num(prompt("Реальна відстань між точками, см:", "400")); if (real > 0 && d > 0) { photo.scale *= real / d; lsSet(PKEY, JSON.stringify(photo)); } calib = null; ui.tool = "select"; view = null; } draw(); return; }
@@ -773,7 +905,19 @@
         if (hg) { drag = { kind: "resize", r: P.byId(proj.rooms, hg.dataset.handle), q0: q }; return; }
         if (rg) { var r = P.byId(proj.rooms, rg.dataset.room); drag = { kind: "room", r: r, q0: q, x0: r.x, y0: r.y, moved: false }; return; }
       } else {
-        if (ptg) { drag = { kind: "pt", t: P.byId(proj.points, ptg.dataset.pt), moved: false }; return; }
+        var addKey = e.shiftKey || e.ctrlKey || e.metaKey || ui.msel;
+        if (ptg && addKey && !live.on) {
+          var pid = ptg.dataset.pt;
+          if (!multi.length && sel && sel.t === "point" && sel.id !== pid) multi = [sel.id];
+          var ix = multi.indexOf(pid); if (ix >= 0) multi.splice(ix, 1); else multi.push(pid);
+          sel = multi.length === 1 ? { t: "point", id: multi[0] } : null; if (multi.length === 1 && !ui.msel) multi = [];
+          draw(); return;
+        }
+        if (ptg && multi.length > 1 && multi.indexOf(ptg.dataset.pt) >= 0) {
+          drag = { kind: "multi", q0: q, moved: false, start: multi.map(function (mid) { var t = P.byId(proj.points, mid); return { t: t, x: t.x, y: t.y, pos: t.pos }; }) }; return;
+        }
+        if (ptg) { multi = []; drag = { kind: "pt", t: P.byId(proj.points, ptg.dataset.pt), moved: false }; return; }
+        if (addKey && !pg && !sg) { drawRect = [q[0], q[1], q[0], q[1]]; drag = { kind: "box" }; return; }
         if (pg) { drag = { kind: "panel", moved: false }; return; }
         if (sg) { sel = { t: "seg", id: sg.dataset.seg }; draw(); return; }
       }
@@ -801,6 +945,16 @@
         svg.setAttribute("viewBox", view.x + " " + view.y + " " + view.w + " " + view.h); return;
       }
       if (drag.kind === "rect") { drawRect[2] = snap(q[0]); drawRect[3] = snap(q[1]); redrawSvg(); return; }
+      if (drag.kind === "box") { drawRect[2] = q[0]; drawRect[3] = q[1]; redrawSvg(); return; }
+      if (drag.kind === "multi") {
+        var mdx = snap(q[0] - drag.q0[0]), mdy = snap(q[1] - drag.q0[1]);
+        drag.start.forEach(function (s0) {
+          var t = s0.t, rm = P.byId(proj.rooms, t.room);
+          if (t.x != null) { t.x = Math.max(rm.x, Math.min(rm.x + rm.w, s0.x + mdx)); t.y = Math.max(rm.y, Math.min(rm.y + rm.h, s0.y + mdy)); }
+          else { var dd = { N: mdx, S: -mdx, E: mdy, W: -mdy }[t.wall]; t.pos = Math.max(5, Math.min(P.wallLen(rm, t.wall) - 5, s0.pos + dd)); }
+        });
+        if (mdx || mdy) drag.moved = true; cache = null; redrawSvg(); return;
+      }
       if (drag.kind === "room") {
         var nx = snap(drag.x0 + q[0] - drag.q0[0]), ny = snap(drag.y0 + q[1] - drag.q0[1]), r = drag.r;
         if (nx !== r.x || ny !== r.y) { var ddx = nx - r.x, ddy = ny - r.y; proj.points.forEach(function (t) { if (t.room === r.id && t.x != null) { t.x += ddx; t.y += ddy; } }); r.x = nx; r.y = ny; drag.moved = true; cache = null; redrawSvg(); }
@@ -828,7 +982,17 @@
         if (w >= 60 && h >= 60) { var r = P.addRoom(proj, "Кімната " + (proj.rooms.length + 1), "room", x, y, w, h); sel = { t: "room", id: r.id }; ui.tool = "select"; }
         changed(); return;
       }
-      if (d.kind === "pan") { if (!d.moved) { sel = null; draw(); } return; }
+      if (d.kind === "box") {
+        var bx0 = Math.min(drawRect[0], drawRect[2]), by0 = Math.min(drawRect[1], drawRect[3]), bx1 = Math.max(drawRect[0], drawRect[2]), by1 = Math.max(drawRect[1], drawRect[3]); drawRect = null;
+        proj.points.forEach(function (t) {
+          var isC = P.KINDS[t.kind].surf === "ceiling"; if ((ui.layer === "ceiling") !== isC) return;
+          var xy = ptXY(t); if (xy && xy[0] >= bx0 && xy[0] <= bx1 && xy[1] >= by0 && xy[1] <= by1 && multi.indexOf(t.id) < 0) multi.push(t.id);
+        });
+        if (sel && sel.t === "point" && multi.indexOf(sel.id) < 0 && multi.length) multi.unshift(sel.id);
+        sel = multi.length === 1 ? { t: "point", id: multi[0] } : null; draw(); return;
+      }
+      if (d.kind === "multi") { changed(); return; }
+      if (d.kind === "pan") { if (!d.moved) { sel = null; if (!ui.msel) multi = []; draw(); } return; }
       if (d.kind === "room" || d.kind === "resize") { sel = { t: "room", id: d.r.id }; changed(); return; }
       if (d.kind === "pt" || d.kind === "ept") { sel = { t: "point", id: d.t.id }; changed(); return; }
       if (d.kind === "panel") { sel = { t: "panel" }; changed(); }

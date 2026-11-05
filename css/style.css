@@ -345,6 +345,17 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-calib { fill: var(--bad); }
 .pl-route { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; stroke-linecap: round; opacity: .9; cursor: pointer; }
 .pl-route.p-ceiling { stroke-dasharray: 8 5; }
+.pl-route.fade { opacity: .12; }
+.pl-lock.on { background: var(--accent-soft) !important; border-color: var(--accent) !important; }
+.pl-htbl { font-size: 12.5px; margin: 6px 0; }
+.pl-htbl td, .pl-htbl th { padding: 3px 6px; }
+.pl-route.hl { stroke-width: 5; opacity: 1; }
+.pl-path { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.pl-path summary { cursor: pointer; font-weight: 600; }
+.pl-pathl { padding-left: 18px; margin: 6px 0; }
+.pl-pathl > li { margin-bottom: 8px; }
+.pl-pathl ul { padding-left: 14px; margin: 4px 0; font-size: 13px; }
+.pl-pathl ul li { margin: 2px 0; }
 .pl-route.p-floor { stroke-dasharray: 2 4; }
 .pl-hole { fill: var(--surface); stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .pl-pt { cursor: grab; }
