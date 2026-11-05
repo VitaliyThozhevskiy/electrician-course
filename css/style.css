@@ -344,7 +344,7 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-draw { fill: var(--accent-soft); stroke: var(--accent); stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
 .pl-calib { fill: var(--bad); }
 .pl-route { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; stroke-linecap: round; opacity: .9; cursor: pointer; }
-.pl-route.p-ceiling { stroke-dasharray: 8 5; }
+.pl-route.p-ceiling, .pl-route.p-ceilGrid { stroke-dasharray: 8 5; stroke-linejoin: round; }
 .pl-route.fade { opacity: .12; }
 .pl-lock.on { background: var(--accent-soft) !important; border-color: var(--accent) !important; }
 .pl-htbl { font-size: 12.5px; margin: 6px 0; }

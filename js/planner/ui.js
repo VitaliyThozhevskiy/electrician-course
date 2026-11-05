@@ -291,7 +291,7 @@
       if (ui.gfilter && g.group !== ui.gfilter) return;
       var col = gcolor(g.group), cls = "pl-route p-" + g.plane + (hk ? (hk[g.key] ? " hl" : " fade") : ""), off = g.plane === "wallBottom" ? 22 : 6 + (proj.groups.findIndex(function (x) { return x.id === g.group; }) % 4) * 2.5;
       var hit = ' data-seg="' + esc(g.key) + '"';
-      if (g.line) h += '<line' + hit + ' x1="' + g.line[0][0] + '" y1="' + g.line[0][1] + '" x2="' + g.line[1][0] + '" y2="' + g.line[1][1] + '" class="' + cls + '" style="stroke:' + col + '"/>';
+      if (g.line) h += '<polyline' + hit + ' points="' + g.line.map(function (q) { return q[0] + "," + q[1]; }).join(" ") + '" class="' + cls + '" style="stroke:' + col + '"/>';
       g.pieces.forEach(function (pc) {
         var r = P.byId(proj.rooms, pc.room), a = wallPt(r, pc.wall, pc.p0, off), e = wallPt(r, pc.wall, pc.p1, off);
         h += '<line' + hit + ' x1="' + a[0] + '" y1="' + a[1] + '" x2="' + e[0] + '" y2="' + e[1] + '" class="' + cls + '" style="stroke:' + col + '"/>';
@@ -410,14 +410,24 @@
     function vert(x, first, ceilEnd) {
       if (ceilEnd) { out.push("↕ Підйом до стелі: " + wname(x.room, x.wall) + ", " + cm(x.pos) + " від лівого кута — від траси вгору до стелі, далі по стелі до світильника."); return; }
       var up = first ? (s.a === "panel" ? "від щита вгору" : "від точки вгору") : "вниз до точки";
+      if (s.plane === "ceiling" || s.plane === "ceilGrid") up = first ? "від точки вгору до стелі" : "зі стелі вниз до точки";
       if (s.plane === "floor") up = first ? "від точки вниз до підлоги" : "від підлоги вгору до точки";
       out.push("↕ Вертикальна штроба: " + wname(x.room, x.wall) + ", " + cm(x.pos) + " від лівого кута — " + up + ", між " + cm(x.z0) + " і " + cm(x.z1) + " від підлоги.");
     }
     if (s.line) {
       if (v[0] && v[0].room && sameEnd(v[0], s.a)) vert(v[0], true);
-      out.push((s.plane === "ceiling" ? "↗ По стелі навпрост у гофрі" : "↗ По підлозі навпрост у гофрі під стяжку") + ", " + P.nf(s.horiz / 100) + " м." + (s.plane === "ceiling" ? " Кліпси через 30–40 см." : ""));
+      if (s.plane === "ceilGrid") {
+        for (var gi = 0; gi < s.line.length - 1; gi++) {
+          var g0 = s.line[gi], g1 = s.line[gi + 1], gl = Math.hypot(g1[0] - g0[0], g1[1] - g0[1]); if (gl < 1) continue;
+          var dirTxt = Math.abs(g1[0] - g0[0]) > Math.abs(g1[1] - g0[1]) ? (g1[0] > g0[0] ? "вправо" : "вліво") : (g1[1] > g0[1] ? "вниз по плану" : "вгору по плану");
+          var rr0 = P.roomAt(proj, (g0[0] + g1[0]) / 2, (g0[1] + g1[1]) / 2);
+          out.push("⟶ По стелі " + dirTxt + " на " + P.nf(gl / 100) + " м" + (rr0 ? " (" + rr0.name + ")" : "") + ", паралельно стіні." + (gi < s.line.length - 2 ? " Далі поворот 90°." : ""));
+        }
+        (s.holes || []).forEach(function (o) { out.push("⊙ Отвір під стелею: " + P.byId(proj.rooms, o.from).name + " → " + P.byId(proj.rooms, o.to).name + "."); });
+        out.push("Кліпси через 30–40 см, біля поворотів — по обидва боки.");
+      } else out.push((s.plane === "ceiling" ? "↗ По стелі навпрост у гофрі" : "↗ По підлозі навпрост у гофрі під стяжку") + ", " + P.nf(s.horiz / 100) + " м." + (s.plane === "ceiling" ? " Кліпси через 30–40 см." : ""));
       var vb = v.filter(function (x) { return sameEnd(x, s.b); })[0]; if (vb) vert(vb, false);
-      if (s.ceilStub && s.plane !== "ceiling") out.push("↗ До світильника — по стелі від стіни до точки на стелі.");
+      if (s.ceilStub && s.plane !== "ceiling" && s.plane !== "ceilGrid") out.push("↗ До світильника — по стелі від стіни до точки на стелі.");
       return out;
     }
     var va = v[0], vb2 = v[1], EA = P.endpoint(proj, s.a), EB = P.endpoint(proj, s.b);
@@ -537,7 +547,7 @@
   function segSide() {
     if (!sel || sel.t !== "seg") return "";
     var seg = calc().segs.filter(function (s) { return s.key === sel.id; })[0]; if (!seg) return "";
-    return '<div class="card pl-card"><h3>Відрізок траси</h3><p>' + esc(P.labelRef(proj, seg.a)) + " → " + esc(P.labelRef(proj, seg.b)) + "</p><p><b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м (горизонталь " + P.nf(seg.horiz / 100) + " м, спуски " + P.nf(seg.drops / 100) + " м)</p>" + planeSel(seg) + hint(seg.plane, true) + (seg.plane === "ceiling" || seg.plane === "floor" ? hint("mount", true) : "") + hint("cable") + "</div>";
+    return '<div class="card pl-card"><h3>Відрізок траси</h3><p>' + esc(P.labelRef(proj, seg.a)) + " → " + esc(P.labelRef(proj, seg.b)) + "</p><p><b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м (горизонталь " + P.nf(seg.horiz / 100) + " м, спуски " + P.nf(seg.drops / 100) + " м)</p>" + planeSel(seg) + hint(seg.plane, true) + (seg.plane === "ceiling" || seg.plane === "ceilGrid" || seg.plane === "floor" ? hint("mount", true) : "") + hint("cable") + "</div>";
   }
   function dot(c) { return c ? '<i class="pl-dotc" style="background:' + P.COLOR_HEX[c] + '"></i>' : '<i class="pl-dotc none"></i>'; }
   function connHtml(t) {

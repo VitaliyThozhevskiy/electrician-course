@@ -34,7 +34,7 @@
     // щиток: ПЗВ 40 А 30 мА на Q1–Q5, решта — диф. автомати або окремі автомати
     var Q = P.addRcd(p, 40, 30);
     function grp(name, kind, In, sec, prot, dI, plane) {
-      var g = P.addGroup(p, { name: name, kind: kind, In: In, sec: sec, prot: prot, rcd: prot === "rcd" ? Q.id : null, dI: dI, curve: "C", plane: plane || "wallTop" });
+      var g = P.addGroup(p, { name: name, kind: kind, In: In, sec: sec, prot: prot, rcd: prot === "rcd" ? Q.id : null, dI: dI, curve: "C", plane: plane || "ceilGrid" });
       return g.id;
     }
     var q1 = grp("Q1 · Світло всієї квартири", "light", 10, 1.5, "rcd");
@@ -45,7 +45,7 @@
     var q6 = grp("Q6 · Санвузол: розетки й дзеркало", "socket", 16, 2.5, "rcbo", 30);
     var q8 = grp("Q8 · Пральна машина", "socket", 16, 2.5, "rcbo", 30);
     var q9 = grp("Q9 · Кондиціонер вітальні", "power", 16, 2.5, "none");
-    var q10 = grp("Q10 · Кондиціонер спальні", "power", 16, 2.5, "none", null, "ceiling");
+    var q10 = grp("Q10 · Кондиціонер спальні", "power", 16, 2.5, "none");
     var q11 = grp("Q11 · Газовий котел", "socket", 10, 2.5, "rcbo", 30);
 
     function w(kind, room, wall, pos, h, group, label, o) {

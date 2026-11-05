@@ -28,7 +28,34 @@
     fan:    { name: "Витяжний вентилятор", surf: "wall", h: 220, cat: "light", power: 15 },
     jbox:   { name: "Розподільча коробка", surf: "wall", h: -20, cat: "box" }
   };
-  var PLANES = { wallTop: "Стіна, під стелею", wallBottom: "Стіна, над підлогою (~30 см)", ceiling: "По стелі (у гофрі)", floor: "По підлозі (у гофрі, під стяжку)" };
+  var PLANES = { wallTop: "Стіна, під стелею", wallBottom: "Стіна, над підлогою (~30 см)", ceilGrid: "По стелі, паралельно стінам (у гофрі)", ceiling: "По стелі навпрост (у гофрі)", floor: "По підлозі (у гофрі, під стяжку)" };
+  function onCeil(pl) { return pl === "ceiling" || pl === "ceilGrid"; }
+  // траса по стелі з поворотом під 90°: вибираємо кут, з яким менше проходів крізь стіни
+  function gridRoute(p, a, b) {
+    function walk(pts) {
+      var holes = [], out = 0, prev = null, len = 0;
+      for (var i = 0; i < pts.length - 1; i++) {
+        var d = dist(pts[i], pts[i + 1]), n = Math.max(1, Math.ceil(d / 5)); len += d;
+        for (var k = 0; k <= n; k++) {
+          var x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k / n, y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k / n, r = roomAt(p, x, y);
+          if (!r) { out++; continue; }
+          if (prev && r.id !== prev.id) holes.push({ from: prev.id, to: r.id, x: x, y: y });
+          prev = r;
+        }
+      }
+      // крок 5 см поза кімнатами = товща стіни; довгий відрізок поза квартирою майже заборонений
+      return { pts: pts, holes: holes, score: holes.length * 20 + out * 10 + len * 0.05, len: len, out: out };
+    }
+    if (Math.abs(a[0] - b[0]) < 1 || Math.abs(a[1] - b[1]) < 1) { var st = walk([a, b]); if (st.out < 30) return st; }
+    var best = null;
+    function tryP(pts) { var r = walk(pts.filter(function (q, i) { return i === 0 || dist(q, pts[i - 1]) > 0.5; })); if (!best || r.score < best.score) best = r; }
+    tryP([a, [b[0], a[1]], b]); tryP([a, [a[0], b[1]], b]);
+    if (best.out >= 30) p.rooms.forEach(function (r) {
+      var cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      tryP([a, [cx, a[1]], [cx, b[1]], b]); tryP([a, [a[0], cy], [b[0], cy], b]);
+    });
+    return best;
+  }
   var GROUP_KINDS = { light: "Освітлення", socket: "Розетки", power: "Окрема лінія (техніка)" };
 
   // ---------- утиліти ----------
@@ -494,6 +521,10 @@
         if (e.ceiling) { drops += (C - z) + e.attach; seg.verts.push({ room: e.room.id, wall: e.wall, pos: e.pos, z0: z, z1: C }); seg.ceilStub = (seg.ceilStub || []).concat([[e.x, e.y, e.room, e.wall, e.pos]]); }
         else { drops += Math.abs(z - e.h); seg.verts.push({ room: e.room.id, wall: e.wall, pos: e.pos, z0: Math.min(z, e.h), z1: Math.max(z, e.h) }); }
       });
+    } else if (plane === "ceilGrid") {
+      var gr = gridRoute(p, [ea.x, ea.y], [eb.x, eb.y]);
+      horiz = gr.len; seg.line = gr.pts; seg.holes = gr.holes.map(function (o) { return { from: o.from, to: o.to, x: o.x, y: o.y, z: C }; });
+      [ea, eb].forEach(function (e) { if (!e.ceiling) { drops += C - e.h; seg.verts.push({ room: e.room.id, wall: e.wall, pos: e.pos, z0: e.h, z1: C }); } });
     } else {
       horiz = dist([ea.x, ea.y], [eb.x, eb.y]); seg.line = [[ea.x, ea.y], [eb.x, eb.y]];
       [ea, eb].forEach(function (e) {
@@ -696,7 +727,7 @@
     segs.forEach(function (s) {
       var L = (s.len + 2 * END_RESERVE) / 100;
       cables[s.cable] = (cables[s.cable] || 0) + L;
-      if (s.plane === "ceiling" || s.plane === "floor") { var d = s.sec >= 4 || s.cores > 3 ? "25" : "20"; tubes[d] = (tubes[d] || 0) + L; clips[d] = (clips[d] || 0) + Math.ceil(s.len / (s.plane === "ceiling" ? 40 : 50)) + 2; }
+      if (onCeil(s.plane) || s.plane === "floor") { var d = s.sec >= 4 || s.cores > 3 ? "25" : "20"; tubes[d] = (tubes[d] || 0) + L; clips[d] = (clips[d] || 0) + Math.ceil(s.len / (onCeil(s.plane) ? 40 : 50)) + 2 + (s.line ? s.line.length - 2 : 0) * 2; }
     });
     var cab = Object.keys(cables).sort().map(function (k) { return { name: "Кабель ВВГнг-LS " + k + " мм²", qty: Math.ceil(cables[k] * 1.1), unit: "м", note: "з запасом 10 % і по " + END_RESERVE + " см на кожне під'єднання" }; });
     var tub = Object.keys(tubes).map(function (k) { return { name: "Гофротруба ПВХ d" + k + " мм", qty: Math.ceil(tubes[k] * 1.1), unit: "м", note: "для трас по стелі / підлозі" }; });
@@ -806,7 +837,7 @@
     step("routes", "Розміть траси",
       "<ul>" + (planes.wallTop ? "<li>Траси по стіні під стелею — горизонталь на " + ZONE_TOP + " см нижче стелі, від неї вертикальні спуски до точок.</li>" : "") +
       (planes.wallBottom ? "<li>Траси над підлогою — горизонталь на висоті ~" + ZONE_BOT + " см, через підрозетники.</li>" : "") +
-      (planes.ceiling ? "<li>Траси по стелі — у гофрі, кліпсами на дюбелях 6×40 до плити: крок 30–40 см, біля повороту, коробки й виводу — 10 см від краю. Лише під натяжну чи гіпсокартонну стелю, не в штробі плити.</li>" : "") +
+      (planes.ceiling || planes.ceilGrid ? "<li>Траси по стелі — у гофрі, кліпсами на дюбелях 6×40 до плити: крок 30–40 см, біля повороту, коробки й виводу — 10 см від краю. Лише під натяжну чи гіпсокартонну стелю, не в штробі плити.</li>" : "") +
       (planes.floor ? "<li>Траси по підлозі — у гофрі під стяжку, з фото і розмірами до заливки.</li>" : "") +
       "<li>Тільки горизонталі й вертикалі, без діагоналей; вертикалі — не ближче ~10–15 см від кутів, дверей і вікон.</li><li>Позначай траси фарбою прямо на стіні — так їх легко сфотографувати.</li></ul>", [["r1", "l5"]]);
 
