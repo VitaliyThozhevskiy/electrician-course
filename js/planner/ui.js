@@ -28,7 +28,7 @@
   }
 
   // ---------- стан ----------
-  var proj = null, photo = null, ui = { tab: "flat", layer: "ceiling", tool: "select", tour: -1, wallRoom: null, wall: "N", showRoutes: true, gfilter: "" };
+  var proj = null, photo = null, ui = { tab: "flat", layer: "ceiling", tool: "select", tour: -1, wallRoom: null, wall: "N", showRoutes: true, gfilter: "" }, live = { on: false, sw: {}, brk: {} };
   var sel = null, view = null, wview = null, host = null, saveT = null, calib = null, drawRect = null;
   function load() {
     try { var s = JSON.parse(lsGet(KEY)); if (s && s.rooms) proj = P.normalize(s); } catch (e) {}
@@ -228,10 +228,11 @@
         var q = ptXY(t); if (!q) return;
         var on = sel && sel.t === "point" && sel.id === t.id, isC = P.KINDS[t.kind].surf === "ceiling";
         var dv = P.device && P.device(t.device), isAC = !!(dv && dv.ac);
-        var dim = !isAC && ((ui.layer === "ceiling" && !isC) || (ui.layer === "walls" && isC));
+        var dim = !live.on && !isAC && ((ui.layer === "ceiling" && !isC) || (ui.layer === "walls" && isC));
+        var lc = live.on ? liveCls(t) : "";
         var hl = sel && sel.t === "point" && related(sel.id, t);
-        h += '<g data-pt="' + t.id + '" class="pl-pt' + (on ? " on" : "") + (hl ? " rel" : "") + (dim ? " dim" : "") + (bad[t.id] ? " " + bad[t.id] : "") + '" style="--g:' + (t.group ? gcolor(t.group) : "var(--muted)") + '">' +
-          (on || hl ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * 1.9 + '" class="pl-ring"/>' : "") + icon(t.kind, q[0], q[1], s) + (isAC ? "<text x=\"" + (q[0] + s * 1.3) + "\" y=\"" + (q[1] - s * .9) + "\" class=\"pl-ac\" style=\"font-size:" + (s * 3.2).toFixed(1) + "px\">❄</text>" : "") + "</g>";
+        h += '<g data-pt="' + t.id + '" class="pl-pt' + (on ? " on" : "") + (hl ? " rel" : "") + (dim ? " dim" : "") + (bad[t.id] && !live.on ? " " + bad[t.id] : "") + lc + '" style="--g:' + (t.group ? gcolor(t.group) : "var(--muted)") + '">' +
+          (lc === " lit" ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * 3 + '" class="pl-glow"/>' : "") + (on || hl ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * 1.9 + '" class="pl-ring"/>' : "") + icon(t.kind, q[0], q[1], s) + (isAC ? "<text x=\"" + (q[0] + s * 1.3) + "\" y=\"" + (q[1] - s * .9) + "\" class=\"pl-ac\" style=\"font-size:" + (s * 3.2).toFixed(1) + "px\">❄</text>" : "") + "</g>";
       });
     }
     if (drawRect) h += '<rect x="' + Math.min(drawRect[0], drawRect[2]) + '" y="' + Math.min(drawRect[1], drawRect[3]) + '" width="' + Math.abs(drawRect[2] - drawRect[0]) + '" height="' + Math.abs(drawRect[3] - drawRect[1]) + '" class="pl-draw"/>';
@@ -270,6 +271,7 @@
       '<button type="button" data-tool="select" class="' + (ui.tool === "select" ? "on" : "") + '">✥ Вибір</button>' +
       kinds.map(function (k) { return '<button type="button" data-tool="add:' + k + '" class="' + (ui.tool === "add:" + k ? "on" : "") + '">+ ' + SHORT[k] + "</button>"; }).join("") +
       (true ? '<button type="button" data-tool="ac" class="' + (ui.tool === "ac" ? "on" : "") + '">+ Кондиціонер</button>' : "") +
+      '<button type="button" data-act="live" class="pl-livebtn' + (live.on ? " on" : "") + '">' + (live.on ? "✕ Зняти напругу" : "🔌 Під напругою") + "</button>" +
       (ui.layer === "walls" ? '<button type="button" data-tool="panel" class="' + (ui.tool === "panel" ? "on" : "") + '">Щит сюди</button>' : "") +
       '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button>' + zoomBtns() + "</div>" +
       '<div class="pl-bar pl-bar2"><label class="pl-barbtn"><input type="checkbox" data-act="routes"' + (ui.showRoutes ? " checked" : "") + "> Траси</label>" +
@@ -277,7 +279,87 @@
       '<span class="pl-legend"><i class="lg-wall"></i>по стіні <i class="lg-ceil"></i>по стелі <i class="lg-floor"></i>по підлозі <i class="lg-hole"></i>отвір у стіні</span></div>' +
       (ui.tool === "ac" ? '<p class="pl-help">Клікни всередині кімнати — планувальник підбере кондиціонер за площею, поставить вивід під стелею і створить окрему лінію з автоматом і кабелем.</p>' : "") +
       (ui.tool.indexOf("add:") === 0 ? '<p class="pl-help">' + (ui.tool === "add:ceil" || ui.tool === "add:spot" ? "Клікни всередині кімнати — світильник стане в цю точку стелі." : "Клікни біля стіни — точка стане на найближчу стіну з типовою висотою. Висоту і відстань уточниш справа або у вкладці «Стіни».") + "</p>" : "") +
-      planSvg("plan") + '</div><div class="pl-side">' + pointSide() + "</div></div>";
+      (live.on ? '<p class="pl-help">Мережа під напругою: клацай вимикачі на плані — світильники засвітяться. Клацни розетку, щоб побачити покази тестера. Автомати й ПЗВ — праворуч.</p>' : "") +
+      planSvg("plan") + '</div><div class="pl-side">' + (live.on ? liveSide() : pointSide()) + "</div></div>";
+    return h;
+  }
+
+  // ---------- режим «Під напругою» ----------
+  function isOn(id) { return live.brk[id] !== 0; }
+  function gPowered(g) {
+    if (!g || !isOn("in") || (proj.relay && !isOn("relay")) || !isOn(g.id)) return false;
+    if (g.prot === "rcd") { var q = P.byId(proj.rcds, g.rcd); if (q && !isOn(q.id)) return false; }
+    return true;
+  }
+  function gWhyOff(g) {
+    if (!g) return "точка не прив'язана до групи";
+    if (!isOn("in")) return "вимкнено ввідний автомат";
+    if (proj.relay && !isOn("relay")) return "вимкнено реле напруги";
+    if (g.prot === "rcd") { var q = P.byId(proj.rcds, g.rcd); if (q && !isOn(q.id)) return "вимкнено ПЗВ " + rcdName(q); }
+    if (!isOn(g.id)) return "вимкнено автомат «" + g.name + "»";
+    return "";
+  }
+  function rcdName(q) { return q.In + " А " + q.dI + " мА"; }
+  function multiWay(t) { var c = t.ctl || []; return c.length >= 2 && c.every(function (x) { var s = P.byId(proj.points, x.sw); return s && (s.kind === "pass" || s.kind === "cross"); }); }
+  function swClosed(t) {
+    var c = t.ctl || []; if (!c.length) return false;
+    if (multiWay(t)) return c.reduce(function (v, x) { return v ^ (live.sw[x.sw + ":1"] ? 1 : 0); }, 0) === 1;
+    return c.some(function (x) { return !!live.sw[x.sw + ":" + x.key]; });
+  }
+  function isLit(t) { return P.KINDS[t.kind].cat === "light" && gPowered(P.byId(proj.groups, t.group)) && swClosed(t); }
+  function liveCls(t) {
+    var cat = P.KINDS[t.kind].cat;
+    if (cat === "light") return isLit(t) ? " lit" : " unlit";
+    if (cat === "switch") { var k = P.KINDS[t.kind].keys || 1, any = false; for (var i = 1; i <= k; i++) if (live.sw[t.id + ":" + i]) any = true; return any ? " swon" : ""; }
+    if (cat === "socket" || cat === "power") return gPowered(P.byId(proj.groups, t.group)) ? " hot" : " dead";
+    return "";
+  }
+  function liveTap(id) {
+    var t = P.byId(proj.points, id); if (!t) return;
+    sel = { t: "point", id: id }; live.msg = "";
+    if (P.KINDS[t.kind].cat === "switch" && (P.KINDS[t.kind].keys || 1) === 1) { var k = id + ":1"; live.sw[k] = live.sw[k] ? 0 : 1; }
+    draw();
+  }
+  function liveSel() {
+    var t = sel && sel.t === "point" && P.byId(proj.points, sel.id); if (!t) return "";
+    var K = P.KINDS[t.kind], g = P.byId(proj.groups, t.group), pw = gPowered(g), nm = esc(P.labelRef(proj, t.id)), h = '<div class="pl-live-sel"><h4>' + nm + "</h4>";
+    if (K.cat === "switch") {
+      var n = K.keys || 1;
+      h += '<div class="pl-keys">';
+      for (var i = 1; i <= n; i++) {
+        var onK = !!live.sw[t.id + ":" + i], lights = proj.points.filter(function (l) { return (l.ctl || []).some(function (c) { return c.sw === t.id && (multiWay(l) || c.key === i); }); });
+        h += '<button type="button" class="pl-key' + (onK ? " on" : "") + '" data-act="lsw" data-id="' + t.id + '" data-v="' + i + '"><b>' + (n > 1 ? "Клавіша " + i : t.kind === "pass" || t.kind === "cross" ? "Перекинути" : "Клавіша") + "</b><span>" +
+          (t.kind === "pass" || t.kind === "cross" ? "положення " + (onK ? "2" : "1") : onK ? "увімкнено" : "вимкнено") + " · " + lights.length + " світ.</span></button>";
+      }
+      h += "</div>";
+      if (t.kind === "pass" || t.kind === "cross") h += "<p class='meta'>Прохідний не має «увімкнено» і «вимкнено» — він перекидає фазу з однієї жили-перемички на іншу. Світло залежить від положення всіх вимикачів ланцюжка.</p>";
+      if (!pw) h += '<p class="pl-live-why">Світло не загориться: ' + esc(gWhyOff(g)) + ".</p>";
+    } else if (K.cat === "light") {
+      var lit = isLit(t);
+      h += "<p>" + (lit ? "💡 Світиться, " + P.nf(t.power || 0, 0) + " Вт." : "Не світиться: " + esc(pw ? (t.ctl || []).length ? "вимикач розімкнув фазу" : "не прив'язаний до вимикача" : gWhyOff(g)) + ".") + "</p>";
+      if ((t.ctl || []).length) h += "<p class='meta'>Вимикачі: " + t.ctl.map(function (c) { return esc(P.labelRef(proj, c.sw)) + (P.byId(proj.points, c.sw) && P.KINDS[P.byId(proj.points, c.sw).kind].keys > 1 ? ", клавіша " + c.key : ""); }).join("; ") + ".</p>";
+    } else if (K.cat === "socket" || K.cat === "power") {
+      h += '<table class="pl-meter"><tr><th>Тестер</th><th>Показ</th></tr><tr><td>L–N</td><td>' + (pw ? "≈ 230 В" : "0 В") + "</td></tr><tr><td>L–PE</td><td>" + (pw ? "≈ 230 В" : "0 В") + "</td></tr><tr><td>N–PE</td><td>0 В</td></tr></table>" +
+        "<p>" + (pw ? "Напруга є. N–PE ≈ 0 В — нуль і земля розділені правильно в щиті." : "Знеструмлено: " + esc(gWhyOff(g)) + ".") + "</p>";
+      if (t.device) { var d = P.device(t.device); if (d && d.id) h += "<p class='meta'>" + esc(d.name) + ": " + (pw ? "працює" : "не працює") + ".</p>"; }
+    } else if (t.kind === "jbox") h += "<p class='meta'>У коробці напруга є, коли увімкнено автомат групи. Перед роботою в коробці — вимкни автомат і перевір відсутність напруги індикатором.</p>";
+    return h + "</div>";
+  }
+  function liveSide() {
+    var lights = proj.points.filter(function (t) { return P.KINDS[t.kind].cat === "light"; }), lit = lights.filter(isLit);
+    var W = lit.reduce(function (s, t) { return s + (t.power || 0); }, 0);
+    function tg(id, name, extra) { var o = isOn(id); return '<div class="pl-brk' + (o ? " on" : "") + '"><button type="button" data-act="lbrk" data-id="' + esc(id) + '" class="pl-lever" aria-pressed="' + o + '">' + (o ? "I" : "O") + "</button><span>" + name + "</span>" + (extra || "") + "</div>"; }
+    var h = '<div class="pl-live"><h3>🔌 Під напругою</h3><p class="pl-live-sum">Світиться: <b>' + lit.length + " з " + lights.length + "</b> · " + P.nf(W, 0) + " Вт</p>" +
+      (live.msg ? '<p class="pl-live-msg">' + esc(live.msg) + "</p>" : "") + liveSel() +
+      '<h4>Щиток</h4><div class="pl-brks">' + tg("in", "Ввідний автомат " + proj.input + " А") + (proj.relay ? tg("relay", "Реле напруги") : "");
+    proj.rcds.forEach(function (q) {
+      h += tg(q.id, "ПЗВ " + rcdName(q), '<button type="button" class="pl-tbtn" data-act="ltest" data-id="' + q.id + '" data-v="rcd">ТЕСТ</button>');
+      proj.groups.filter(function (g) { return g.prot === "rcd" && g.rcd === q.id; }).forEach(function (g) { h += '<div class="pl-brk-sub">' + tg(g.id, esc(g.curve + g.In + " · " + g.name)) + "</div>"; });
+    });
+    proj.groups.filter(function (g) { return !(g.prot === "rcd" && P.byId(proj.rcds, g.rcd)); }).forEach(function (g) {
+      h += tg(g.id, esc(g.curve + g.In + " · " + g.name) + (g.prot === "rcbo" ? " <em>диф., " + g.dI + " мА</em>" : ""), g.prot === "rcbo" ? '<button type="button" class="pl-tbtn" data-act="ltest" data-id="' + g.id + '" data-v="rcbo">ТЕСТ</button>' : "");
+    });
+    h += '</div><div class="row"><button type="button" class="btn ghost small" data-act="lalloff">Вимкнути всі вимикачі</button></div>' + hint("live") + "</div>";
     return h;
   }
 
@@ -329,7 +411,7 @@
     // кабель до точки
     var seg = c.segs.filter(function (s) { return s.b === t.id; })[0];
     if (seg) h += "<h4>Кабель до точки</h4><p>Від «" + esc(P.labelRef(proj, seg.a)) + "»: <b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м</p>" + planeSel(seg);
-    h += connHtml(t) + hint(hintKey(t)) + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
+    h += connHtml(t) + hint(hintKey(t)) + (function () { var rr = P.byId(proj.rooms, t.room); return rr && (rr.type === "bath" || rr.type === "wc") ? hint("bath") : ""; })() + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
     return h;
   }
   function hintKey(t) { return t.kind; }
@@ -346,7 +428,7 @@
   function segSide() {
     if (!sel || sel.t !== "seg") return "";
     var seg = calc().segs.filter(function (s) { return s.key === sel.id; })[0]; if (!seg) return "";
-    return '<div class="card pl-card"><h3>Відрізок траси</h3><p>' + esc(P.labelRef(proj, seg.a)) + " → " + esc(P.labelRef(proj, seg.b)) + "</p><p><b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м (горизонталь " + P.nf(seg.horiz / 100) + " м, спуски " + P.nf(seg.drops / 100) + " м)</p>" + planeSel(seg) + hint(seg.plane, true) + hint("cable") + "</div>";
+    return '<div class="card pl-card"><h3>Відрізок траси</h3><p>' + esc(P.labelRef(proj, seg.a)) + " → " + esc(P.labelRef(proj, seg.b)) + "</p><p><b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м (горизонталь " + P.nf(seg.horiz / 100) + " м, спуски " + P.nf(seg.drops / 100) + " м)</p>" + planeSel(seg) + hint(seg.plane, true) + (seg.plane === "ceiling" || seg.plane === "floor" ? hint("mount", true) : "") + hint("cable") + "</div>";
   }
   function dot(c) { return c ? '<i class="pl-dotc" style="background:' + P.COLOR_HEX[c] + '"></i>' : '<i class="pl-dotc none"></i>'; }
   function connHtml(t) {
@@ -534,6 +616,11 @@
     if (b.dataset.layer) { ui.layer = b.dataset.layer; ui.tool = "select"; save(); draw(); return; }
     if (b.dataset.wall) { ui.wall = b.dataset.wall; save(); draw(); return; }
     var a = b.dataset.act, id = b.dataset.id;
+    if (a === "live") { live.on = !live.on; if (live.on) { live.sw = {}; live.brk = {}; ui.tool = "select"; } draw(); return; }
+    if (a === "lsw") { var lk = id + ":" + b.dataset.v; live.sw[lk] = live.sw[lk] ? 0 : 1; draw(); return; }
+    if (a === "lbrk") { live.brk[id] = isOn(id) ? 0 : 1; draw(); return; }
+    if (a === "ltest") { live.brk[id] = 0; live.msg = b.dataset.v === "rcbo" ? "Диф. автомат спрацював від кнопки «ТЕСТ» — механізм справний. Увімкни його знову." : "ПЗВ спрацював від кнопки «ТЕСТ» — механізм справний. Усе під ним знеструмлено. Увімкни ПЗВ знову."; draw(); return; }
+    if (a === "lalloff") { live.sw = {}; draw(); return; }
     if (a === "tpl") { setProj(P.template(b.dataset.v)); ui.tab = "flat"; draw(); return; }
     if (a === "desc") {
       var txt = host.querySelector(".pl-desc").value, p = P.parseDescription(txt);
@@ -672,6 +759,7 @@
       try { svg.setPointerCapture(e.pointerId); } catch (er) {}
       e.preventDefault();
       if (elev) { elevDown(q, ptg, pg, sg); return; }
+      if (live.on) { if (ptg) { liveTap(ptg.dataset.pt); return; } drag = { kind: "pan", c0: [e.clientX, e.clientY], v0: view || bounds(), moved: false }; return; }
       if (tool === "calib") { calib = (calib || []).concat([q]); if (calib.length === 2) { var d = Math.hypot(calib[1][0] - calib[0][0], calib[1][1] - calib[0][1]); var real = num(prompt("Реальна відстань між точками, см:", "400")); if (real > 0 && d > 0) { photo.scale *= real / d; lsSet(PKEY, JSON.stringify(photo)); } calib = null; ui.tool = "select"; view = null; } draw(); return; }
       if (tool === "room") { drawRect = [snap(q[0]), snap(q[1]), snap(q[0]), snap(q[1])]; drag = { kind: "rect" }; return; }
       if (tool === "del") { if (ptg) delPoint(ptg.dataset.pt); return; }

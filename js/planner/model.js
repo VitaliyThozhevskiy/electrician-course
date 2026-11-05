@@ -689,14 +689,15 @@
   // ---------- специфікація ----------
   function spec(p, segs) {
     segs = segs || routes(p);
-    var cables = {}, tubes = {}, items = [];
+    var cables = {}, tubes = {}, items = [], clips = {};
     segs.forEach(function (s) {
       var L = (s.len + 2 * END_RESERVE) / 100;
       cables[s.cable] = (cables[s.cable] || 0) + L;
-      if (s.plane === "ceiling" || s.plane === "floor") { var d = s.sec >= 4 || s.cores > 3 ? "25" : "20"; tubes[d] = (tubes[d] || 0) + L; }
+      if (s.plane === "ceiling" || s.plane === "floor") { var d = s.sec >= 4 || s.cores > 3 ? "25" : "20"; tubes[d] = (tubes[d] || 0) + L; clips[d] = (clips[d] || 0) + Math.ceil(s.len / (s.plane === "ceiling" ? 40 : 50)) + 2; }
     });
     var cab = Object.keys(cables).sort().map(function (k) { return { name: "Кабель ВВГнг-LS " + k + " мм²", qty: Math.ceil(cables[k] * 1.1), unit: "м", note: "з запасом 10 % і по " + END_RESERVE + " см на кожне під'єднання" }; });
     var tub = Object.keys(tubes).map(function (k) { return { name: "Гофротруба ПВХ d" + k + " мм", qty: Math.ceil(tubes[k] * 1.1), unit: "м", note: "для трас по стелі / підлозі" }; });
+    Object.keys(clips).forEach(function (k) { tub.push({ name: "Кліпса-тримач для гофри d" + k + " + дюбель 6×40 з шурупом", qty: Math.ceil(clips[k] * 1.1), unit: "шт", note: "по стелі крок 30–40 см, по підлозі ~50 см, плюс біля кожного повороту й кінця" }); });
     var cnt = function (f) { return p.points.filter(f).length; };
     var posts = p.points.reduce(function (s, t) { return s + (t.kind === "socket" ? t.gang : 0); }, 0);
     var frames = {}; p.points.forEach(function (t) { if (t.kind === "socket" && t.gang > 1) frames[t.gang] = (frames[t.gang] || 0) + 1; });
@@ -802,7 +803,7 @@
     step("routes", "Розміть траси",
       "<ul>" + (planes.wallTop ? "<li>Траси по стіні під стелею — горизонталь на " + ZONE_TOP + " см нижче стелі, від неї вертикальні спуски до точок.</li>" : "") +
       (planes.wallBottom ? "<li>Траси над підлогою — горизонталь на висоті ~" + ZONE_BOT + " см, через підрозетники.</li>" : "") +
-      (planes.ceiling ? "<li>Траси по стелі — у гофрі, кріплення кліпсами; під натяжну чи гіпсокартонну стелю, не в штробі плити.</li>" : "") +
+      (planes.ceiling ? "<li>Траси по стелі — у гофрі, кліпсами на дюбелях 6×40 до плити: крок 30–40 см, біля повороту, коробки й виводу — 10 см від краю. Лише під натяжну чи гіпсокартонну стелю, не в штробі плити.</li>" : "") +
       (planes.floor ? "<li>Траси по підлозі — у гофрі під стяжку, з фото і розмірами до заливки.</li>" : "") +
       "<li>Тільки горизонталі й вертикалі, без діагоналей; вертикалі — не ближче ~10–15 см від кутів, дверей і вікон.</li><li>Позначай траси фарбою прямо на стіні — так їх легко сфотографувати.</li></ul>", [["r1", "l5"]]);
 

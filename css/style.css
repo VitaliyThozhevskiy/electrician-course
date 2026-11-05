@@ -349,6 +349,33 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-hole { fill: var(--surface); stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .pl-pt { cursor: grab; }
 .pl-pt.dim { opacity: .4; }
+.pl-svg .pl-glow { fill: #ffd54a; opacity: .28; pointer-events: none; }
+.pl-svg .pl-pt.lit .pi-light { fill: #ffd54a; stroke: #b8860b; }
+.pl-svg .pl-pt.unlit .pi-light { fill: var(--surface); opacity: .75; }
+.pl-svg .pl-pt.swon .pi-switch { fill: #3fb950; }
+.pl-svg .pl-pt.hot .pi { stroke: #3fb950; }
+.pl-svg .pl-pt.dead .pi { opacity: .45; }
+.pl-livebtn.on { background: #3fb950 !important; color: #fff !important; border-color: #3fb950 !important; }
+.pl-live h3 { margin: 0 0 6px; }
+.pl-live h4 { margin: 14px 0 6px; }
+.pl-live-sum { margin: 0 0 8px; }
+.pl-live-msg { background: rgba(63,185,80,.14); border-left: 3px solid #3fb950; padding: 6px 10px; margin: 0 0 8px; font-size: 14px; }
+.pl-live-why { color: #d29922; }
+.pl-live-sel { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.pl-live-sel h4 { margin: 0 0 6px; }
+.pl-keys { display: flex; gap: 8px; flex-wrap: wrap; }
+.pl-key { flex: 1 1 120px; min-height: 56px; border: 2px solid var(--border); border-radius: 10px; background: transparent; color: inherit; display: flex; flex-direction: column; align-items: flex-start; padding: 6px 10px; cursor: pointer; }
+.pl-key span { font-size: 12px; opacity: .8; }
+.pl-key.on { border-color: #3fb950; background: rgba(63,185,80,.15); }
+.pl-brks { display: flex; flex-direction: column; gap: 4px; }
+.pl-brk { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pl-brk span { flex: 1; }
+.pl-brk-sub { padding-left: 18px; }
+.pl-lever { width: 34px; height: 30px; border-radius: 6px; border: 1px solid var(--border); background: #c62828; color: #fff; font-weight: 700; cursor: pointer; flex: none; }
+.pl-brk.on .pl-lever { background: #2e7d32; }
+.pl-tbtn { font-size: 11px; padding: 3px 7px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; }
+.pl-meter { border-collapse: collapse; font-size: 13px; margin: 4px 0; }
+.pl-meter td, .pl-meter th { border: 1px solid var(--border); padding: 3px 8px; text-align: left; }
 .pl-svg text.pl-ac { fill: #2a7fd0; font-weight: 700; pointer-events: none; }
 [data-theme="dark"] .pl-svg text.pl-ac { fill: #6fb3ff; }
 .pl-pt .pi { fill: var(--surface); stroke: var(--g); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
