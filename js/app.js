@@ -60,7 +60,9 @@
           (p >= 1 ? '<span class="done-dot">✓</span>' : "") + "</a>";
       });
     });
-    h += '<a href="#/calc" class="' + (route.page === "calc" ? "active" : "") + '"><span class="num">∑</span>Калькулятори</a>';
+    h += '<a href="#/calc" class="' + (route.page === "calc" ? "active" : "") + '"><span class="num">∑</span>Калькулятори</a>' +
+      '<a href="#/builder" class="' + (route.page === "builder" ? "active" : "") + '"><span class="num">⚡</span>Конструктор схем</a>' +
+      '<a href="#/planner" class="' + (route.page === "planner" ? "active" : "") + '"><span class="num">⌗</span>Планувальник квартири</a>';
     sidebar.innerHTML = h;
   }
 
@@ -69,6 +71,8 @@
     var parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
     if (!parts.length) return { page: "home" };
     if (parts[0] === "calc") return { page: "calc" };
+    if (parts[0] === "builder") return { page: "builder" };
+    if (parts[0] === "planner") return { page: "planner" };
     if (parts[0] === "m" && parts[1]) {
       var r = { page: "module", mod: parts[1] };
       if (parts[2] === "l" && parts[3]) { r.page = "lesson"; r.lesson = parts[3]; }
@@ -87,6 +91,8 @@
     if (route.mod && !m) { app.innerHTML = "<h1>Не знайдено</h1><p>Цей розділ ще не завантажився. <a href='#/'>На головну</a></p>"; return; }
     if (route.page === "home") home();
     else if (route.page === "calc") { app.innerHTML = window.CALC ? window.CALC.render() : "<p>Калькулятори недоступні.</p>"; if (window.CALC) window.CALC.bind(app); document.title = "Калькулятори · Електрика для дому"; }
+    else if (route.page === "builder") { app.innerHTML = window.BUILDER ? window.BUILDER.render() : "<p>Конструктор недоступний.</p>"; if (window.BUILDER) window.BUILDER.bind(app); document.title = "Конструктор схем · Електрика для дому"; }
+    else if (route.page === "planner") { app.innerHTML = window.PLANNER ? window.PLANNER.render() : "<p>Планувальник недоступний.</p>"; if (window.PLANNER) window.PLANNER.bind(app); document.title = "Планувальник квартири · Електрика для дому"; }
     else if (route.page === "module") moduleView(m);
     else if (route.page === "lesson") lessonView(m, route.lesson);
     else if (route.page === "practice") practiceView(m, route.task);
@@ -104,9 +110,9 @@
       '<div class="stats"><div class="stat"><b>' + COURSE.length + '</b><span>розділів</span></div><div class="stat"><b>' + nL +
       '</b><span>уроків теорії</span></div><div class="stat"><b>' + nP + '</b><span>практичних завдань</span></div><div class="stat"><b>' + nQ +
       '</b><span>питань у тестах</span></div></div>' +
-      '<div class="row"><a class="btn" href="#/m/' + (COURSE[0] ? COURSE[0].id : "") + '">Почати з модуля 1</a><a class="btn ghost" href="#/calc">Калькулятори</a></div></section>' +
+      '<div class="row"><a class="btn" href="#/m/' + (COURSE[0] ? COURSE[0].id : "") + '">Почати з модуля 1</a><a class="btn ghost" href="#/calc">Калькулятори</a><a class="btn ghost" href="#/builder">Конструктор схем</a><a class="btn ghost" href="#/planner">Планувальник квартири</a></div></section>' +
       '<div class="warn disclaimer"><b>Важливо.</b> Матеріали — навчальні. Вони не дають кваліфікаційного розряду, групи з електробезпеки чи права самостійно виконувати електромонтажні роботи. Будь-яку роботу в електроустановці виконуй лише після знеструмлення і перевірки відсутності напруги, а роботи у поверховому щиті та на вводі — тільки силами оператора системи розподілу або уповноважених осіб.</div>' +
-      '<div class="note"><b>Як працює практика.</b> Задачі з числовою відповіддю перевіряються автоматично. Схеми з позначкою «Симулятор» можна зібрати в безкоштовному браузерному симуляторі Falstad CircuitJS. Прогрес зберігається лише у твоєму браузері.</div>';
+      '<div class="note"><b>Як працює практика.</b> Задачі з числовою відповіддю перевіряються автоматично. Схеми з кнопкою «Зібрати схему в конструкторі» збираються прямо на сайті — конструктор рахує струми й напруги і перевіряє, чи схема працює правильно. Прогрес зберігається лише у твоєму браузері.</div>';
     h += "<h2>Програма</h2><div class='grid'>";
     COURSE.forEach(function (m) {
       var p = Math.round(modProgress(m) * 100);
@@ -201,13 +207,29 @@
         h += '<div class="check"><input type="text" inputmode="decimal" placeholder="Відповідь" data-ans="' + i + '"><span>' + esc(p.unit || "") +
           '</span><button class="btn small" data-chk="' + i + '">Перевірити</button><span class="verdict" id="v-' + i + '"></span></div>';
       }
-      if (p.sim) h += '<p><a class="btn ghost small" href="https://www.falstad.com/circuit/circuitjs.html" target="_blank" rel="noopener">Відкрити симулятор Falstad ↗</a></p>';
+      if (p.sim && window.BUILDER) h += '<div class="bld-slot" data-bld="' + m.id + "/" + p.id + '" data-i="' + i + '"><button type="button" class="btn small" data-bldopen>⚡ Зібрати схему в конструкторі</button></div>';
       if (p.hint) h += '<details class="reveal"><summary>Підказка</summary>' + p.hint + "</details>";
       if (p.solution) h += '<details class="reveal"><summary>Розв\'язок / еталон</summary>' + p.solution + "</details>";
       h += '<label class="donebox"><input type="checkbox" data-done="' + i + '"' + (isDone(key) ? " checked" : "") + "> Виконано</label></div></details>";
     });
     app.innerHTML = h + pagerModules(m);
 
+    // конструктор схем монтується лише після кліку: усередині закритого <details> SVG не має розміру
+    app.querySelectorAll(".bld-slot").forEach(function (slot) {
+      var i = +slot.dataset.i;
+      function open() {
+        window.BUILDER.mount(slot, { key: slot.dataset.bld, onPass: function () {
+          mark(m.id + "/p/" + m.practice[i].id, true);
+          var c = app.querySelector('[data-done="' + i + '"]'); if (c) c.checked = true;
+          renderSidebar(parse());
+        } });
+        try { sessionStorage.setItem("ec-bld-open:" + slot.dataset.bld, "1"); } catch (e) {}
+      }
+      slot.querySelector("[data-bldopen]").onclick = open;
+      var reopen = false;
+      try { reopen = sessionStorage.getItem("ec-bld-open:" + slot.dataset.bld) === "1"; } catch (e) {}
+      if (reopen && slot.closest("details").open) open();
+    });
     app.querySelectorAll("[data-chk]").forEach(function (b) {
       b.onclick = function () { check(+b.dataset.chk); };
     });

@@ -1,0 +1,762 @@
+/* Планувальник електрики квартири — інтерфейс. Маршрут #/planner. */
+(function () {
+  "use strict";
+  var P = window.PLAN;
+  var KEY = "ec-planner", PKEY = "ec-planner-photo", SKEY = "ec-planner-ui";
+  var COLORS = ["#c2560f", "#1f6fd1", "#1f7a46", "#8e44ad", "#b3261e", "#0f8b8d", "#a0522d", "#6b7f00", "#d6336c", "#5c6b7a", "#e67700", "#2b8a3e"];
+  var TABS = [["flat", "Квартира"], ["plan", "План і стеля"], ["walls", "Стіни"], ["groups", "Групи і щит"], ["wiring", "З'єднання"], ["spec", "Матеріали"], ["steps", "План робіт"]];
+  var WALL_KINDS = ["socket", "outlet", "sw1", "sw2", "pass", "cross", "sconce", "led", "jbox"];
+  var CEIL_KINDS = ["ceil", "spot"];
+  var SHORT = { socket: "Розетка", outlet: "Вивід під техніку", sw1: "Вимикач", sw2: "Вимикач 2-кл.", pass: "Прохідний", cross: "Перехресний", sconce: "Бра", led: "LED-підсвітка", jbox: "Коробка", ceil: "Світильник", spot: "Точковий" };
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function num(v) { return parseFloat(String(v).replace(",", ".")); }
+  function snap(v, s) { s = s || 5; return Math.round(v / s) * s; }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function lessonTitle(m, l) {
+    var c = window.COURSE || [];
+    for (var i = 0; i < c.length; i++) if (c[i].id === m) for (var j = 0; j < c[i].lessons.length; j++) if (c[i].lessons[j].id === l) return c[i].lessons[j].title;
+    return m + "/" + l;
+  }
+  function lessonLinks(ls) {
+    return (ls || []).map(function (l) { return '<a class="pl-lesson" href="#/m/' + l[0] + "/l/" + l[1] + '">📖 ' + esc(lessonTitle(l[0], l[1])) + "</a>"; }).join(" ");
+  }
+  function hint(key, open) {
+    var h = P.HINTS[key]; if (!h) return "";
+    return '<details class="pl-hint"' + (open ? " open" : "") + "><summary>💡 Чому так: " + esc(h.t) + "</summary>" + h.h + '<div class="pl-links">' + lessonLinks(h.l) + "</div></details>";
+  }
+
+  // ---------- стан ----------
+  var proj = null, photo = null, ui = { tab: "flat", layer: "ceiling", tool: "select", tour: -1, wallRoom: null, wall: "N", showRoutes: true, gfilter: "" };
+  var sel = null, view = null, wview = null, host = null, saveT = null, calib = null, drawRect = null;
+  function load() {
+    try { var s = JSON.parse(lsGet(KEY)); if (s && s.rooms) proj = P.normalize(s); } catch (e) {}
+    try { photo = JSON.parse(lsGet(PKEY)); } catch (e) {}
+    try { var u = JSON.parse(lsGet(SKEY)); if (u) for (var k in u) ui[k] = u[k]; } catch (e) {}
+    ui.tool = "select";
+  }
+  function save() {
+    clearTimeout(saveT);
+    saveT = setTimeout(function () { if (proj) lsSet(KEY, JSON.stringify(proj)); lsSet(SKEY, JSON.stringify({ tab: ui.tab, layer: ui.layer, tour: ui.tour, wallRoom: ui.wallRoom, wall: ui.wall, showRoutes: ui.showRoutes })); }, 150);
+  }
+  function setProj(p) { proj = P.normalize(p); sel = null; view = null; save(); }
+
+  // ---------- кеш розрахунків ----------
+  var cache = null;
+  function calc() {
+    if (cache) return cache;
+    var segs = P.routes(proj);
+    cache = { segs: segs, issues: P.issues(proj, segs) };
+    return cache;
+  }
+  function changed() { cache = null; save(); draw(); }
+
+  // ---------- оболонка ----------
+  function render() {
+    return '<div class="crumbs"><a href="#/">Головна</a> / Планувальник квартири</div><h1>Планувальник електрики квартири</h1>' +
+      '<p class="lead">Спроєктуй проводку квартири з нуля: кімнати, точки на стінах і стелі, траси кабелів, групи, щит, з\'єднання в коробках, матеріали і покроковий план робіт. Кожне рішення має пояснення «Чому так?» з посиланням на урок.</p>' +
+      '<div class="pl-root"></div>' +
+      '<div class="warn disclaimer">Планувальник — навчальний інструмент. Авторозстановка — розумна чернетка для типової квартири, а не проєкт: перевір точки з меблями, сантехнікою, газовими трубами і конструкцією будинку. Підключення вводу — лише оператор системи розподілу або уповноважена особа.</div>';
+  }
+  function bind(root) {
+    host = root.querySelector(".pl-root");
+    load(); cache = null;
+    host.addEventListener("click", onClick);
+    host.addEventListener("change", onChange);
+    draw();
+  }
+
+  function draw() {
+    if (!host) return;
+    if (!proj) ui.tab = "flat";
+    var c = proj ? calc() : null, errs = c ? c.issues.filter(function (i) { return i.lvl === "error"; }).length : 0, warns = c ? c.issues.length - errs : 0;
+    var h = '<div class="pl-tabs" role="tablist">' + TABS.map(function (t) {
+      var dis = !proj && t[0] !== "flat";
+      return '<button type="button" role="tab" data-tab="' + t[0] + '" class="' + (ui.tab === t[0] ? "on" : "") + '"' + (dis ? " disabled" : "") + ">" + t[1] +
+        (t[0] === "groups" && errs ? ' <span class="pl-badge bad">' + errs + "</span>" : t[0] === "groups" && warns ? ' <span class="pl-badge">' + warns + "</span>" : "") + "</button>";
+    }).join("") + (proj ? '<button type="button" class="pl-tourbtn" data-act="tour">' + (ui.tour >= 0 ? "✕ Закрити навчання" : "🎓 Навчальний режим") + "</button>" : "") + "</div>";
+    if (proj && ui.tour >= 0) {
+      var T = P.TOUR[ui.tour];
+      h += '<div class="pl-tour"><b>' + esc(T.t) + "</b> " + esc(T.h) + '<div class="pl-tour-nav">' + (ui.tour > 0 ? '<button type="button" class="btn ghost small" data-act="tprev">← Назад</button>' : "") +
+        (ui.tour < P.TOUR.length - 1 ? '<button type="button" class="btn small" data-act="tnext">Далі →</button>' : '<button type="button" class="btn small" data-act="tour">Готово</button>') + " <span class='meta'>" + (ui.tour + 1) + " / " + P.TOUR.length + "</span></div></div>";
+    }
+    h += '<div class="pl-body">' + body() + "</div>";
+    var sx = window.scrollX, sy = window.scrollY;
+    host.innerHTML = h;
+    window.scrollTo(sx, sy);
+    afterDraw();
+  }
+  function body() {
+    if (ui.tab === "flat") return flatTab();
+    if (ui.tab === "plan") return planTab();
+    if (ui.tab === "walls") return wallsTab();
+    if (ui.tab === "groups") return groupsTab();
+    if (ui.tab === "wiring") return wiringTab();
+    if (ui.tab === "spec") return specTab();
+    return stepsTab();
+  }
+
+  // ---------- поля форм ----------
+  function inp(obj, id, k, v, opt) {
+    opt = opt || {};
+    return '<label class="pl-f"><span>' + esc(opt.label == null ? k : opt.label) + '</span><input type="' + (opt.type || "text") + '"' + (opt.type ? "" : ' inputmode="decimal"') + ' data-o="' + obj + '" data-id="' + esc(id) + '" data-k="' + k + '"' + (opt.str ? ' data-str="1"' : "") +
+      ' value="' + esc(opt.str ? v : String(Math.round(v * 10) / 10).replace(".", ",")) + '">' + (opt.unit ? "<em>" + opt.unit + "</em>" : "") + "</label>";
+  }
+  function selF(obj, id, k, v, options, label) {
+    return '<label class="pl-f"><span>' + esc(label) + '</span><select data-o="' + obj + '" data-id="' + esc(id) + '" data-k="' + k + '">' +
+      options.map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(v) ? " selected" : "") + ">" + esc(o[1]) + "</option>"; }).join("") + "</select></label>";
+  }
+  function wallOpts(r) { return P.WALLS.map(function (w) { return [w, P.WALL_NAME[w] + " (" + Math.round(P.wallLen(r, w)) + " см)"]; }); }
+
+  // ---------- вкладка «Квартира» ----------
+  function flatTab() {
+    var h = "";
+    if (!proj) {
+      return '<div class="pl-start">' +
+        '<div class="card"><h3>Шаблон</h3><p>Типове планування — розміри потім змінюються.</p><div class="row"><button type="button" class="btn small" data-act="tpl" data-v="studio">Студія</button><button type="button" class="btn small" data-act="tpl" data-v="one">1-кімнатна</button><button type="button" class="btn small" data-act="tpl" data-v="two">2-кімнатна</button></div></div>' +
+        '<div class="card"><h3>З опису</h3><p>Кожна кімната — з нового рядка: назва і розміри (м або см) чи площа. Можна вказати висоту стелі.</p><textarea class="pl-desc" rows="6" placeholder="Коридор 1,4×4,5&#10;Кімната 4,2×3,6&#10;Кухня 3×2,8&#10;Ванна 170×200 см&#10;Стеля 2,7"></textarea><div class="row"><button type="button" class="btn small" data-act="desc">Створити план</button></div></div>' +
+        '<div class="card"><h3>Файл проєкту</h3><p>Відкрий раніше збережений проєкт (.json) — свій або підготовлений для тебе.</p><label class="btn ghost small pl-file">Відкрити файл<input type="file" accept=".json,application/json" data-act="import" hidden></label>' +
+        '<p class="meta">Після створення можна підкласти фото плану з БТІ чи від забудовника і підігнати кімнати по ньому.</p></div></div>';
+    }
+    h += '<div class="pl-cols"><div class="pl-main">' + toolbarFlat() + planSvg("flat") + "</div><div class='pl-side'>" + flatSide() + "</div></div>";
+    return h;
+  }
+  function toolbarFlat() {
+    return '<div class="pl-bar">' +
+      '<button type="button" data-tool="select" class="' + (ui.tool === "select" ? "on" : "") + '">✥ Рух і розмір</button>' +
+      '<button type="button" data-tool="room" class="' + (ui.tool === "room" ? "on" : "") + '">▭ Намалювати кімнату</button>' +
+      '<label class="pl-barbtn">🖼 Фото плану<input type="file" accept="image/*" data-act="photo" hidden></label>' +
+      (photo ? '<button type="button" data-tool="calib" class="' + (ui.tool === "calib" ? "on" : "") + '">📏 Масштаб фото</button><label class="pl-barbtn">Прозорість <input type="range" min="10" max="100" value="' + Math.round((photo.op || 0.5) * 100) + '" data-act="photoop"></label><button type="button" data-act="photodel">Прибрати фото</button>' : "") +
+      zoomBtns() + "</div>" +
+      (ui.tool === "calib" ? '<p class="pl-help">Клікни дві точки на фото, між якими знаєш реальну відстань (наприклад, довжину стіни), — потім введи її в сантиметрах.</p>' : "") +
+      (ui.tool === "room" ? '<p class="pl-help">Протягни прямокутник по плану (або по фото) — з\'явиться нова кімната. Внутрішні розміри потім уточни цифрами справа.</p>' : "");
+  }
+  function zoomBtns() { return '<span class="pl-zoom"><button type="button" data-act="zin" title="Збільшити">＋</button><button type="button" data-act="zout" title="Зменшити">－</button><button type="button" data-act="zfit" title="Вмістити">⤢</button></span>'; }
+  function flatSide() {
+    var h = '<div class="card pl-card"><h3>Проєкт</h3>' + inp("proj", "", "name", proj.name, { label: "Назва", str: true }) + inp("proj", "", "ceilH", proj.ceilH, { label: "Висота стелі (чистова)", unit: "см" }) +
+      selF("proj", "", "input", proj.input, [[25, "C25"], [32, "C32"], [40, "C40"], [50, "C50"], [63, "C63"]], "Ввідний автомат") +
+      selF("proj", "", "system", proj.system, [["TN-C-S", "TN-C-S (є PE)"], ["TN-C", "TN-C (старий будинок, без PE)"], ["TT", "TT (власний заземлювач)"]], "Система заземлення") +
+      '<label class="pl-f pl-chk"><input type="checkbox" data-o="proj" data-k="relay"' + (proj.relay ? " checked" : "") + "> Реле напруги в щиті</label>" +
+      (proj.system === "TN-C" ? '<div class="warn">У системі TN-C немає окремого PE. Розетки з заземленням без PE не захищають, а «занулення» в розетці — небезпечне. Як правило, потрібна реконструкція вводу до TN-C-S — це вирішує оператор мережі.</div>' : "") +
+      '<div class="row"><button type="button" class="btn" data-act="auto">⚡ Авторозстановка</button></div><p class="meta">Розставить світло, вимикачі, розетки, коробки і групи за типовими правилами. Поточні точки буде замінено.</p>' +
+      '<div class="row"><button type="button" class="btn ghost small" data-act="export">⬇ Зберегти файл</button><label class="btn ghost small pl-file">⬆ Відкрити файл<input type="file" accept=".json,application/json" data-act="import" hidden></label><button type="button" class="btn ghost small" data-act="new">Новий проєкт</button></div></div>';
+    var r = sel && sel.t === "room" ? P.byId(proj.rooms, sel.id) : null;
+    if (!r) h += '<div class="card pl-card"><h3>Кімнати</h3><p class="meta">Клікни кімнату на плані, щоб змінити її, або намалюй нову.</p><ul class="pl-list">' + proj.rooms.map(function (q) { return '<li><a href="javascript:void 0" data-act="selroom" data-id="' + q.id + '">' + esc(q.name) + "</a> <span class='meta'>" + nfm(q.w) + "×" + nfm(q.h) + " м</span></li>"; }).join("") + '</ul><button type="button" class="btn ghost small" data-act="addroom">+ Кімната</button></div>';
+    else {
+      h += '<div class="card pl-card"><h3>' + esc(r.name) + "</h3>" + inp("room", r.id, "name", r.name, { label: "Назва", str: true }) +
+        selF("room", r.id, "type", r.type, Object.keys(P.ROOM_TYPES).map(function (k) { return [k, P.ROOM_TYPES[k]]; }), "Тип (від нього залежать правила)") +
+        '<div class="pl-grid2">' + inp("room", r.id, "w", r.w, { label: "Ширина", unit: "см" }) + inp("room", r.id, "h", r.h, { label: "Глибина", unit: "см" }) + inp("room", r.id, "x", r.x, { label: "X", unit: "см" }) + inp("room", r.id, "y", r.y, { label: "Y", unit: "см" }) + "</div>" +
+        "<h4>Двері і вікна</h4>" + proj.openings.filter(function (o) { return o.room === r.id; }).map(function (o) {
+          return '<div class="pl-open">' + selF("open", o.id, "kind", o.kind, [["door", "Двері"], ["window", "Вікно"]], "") + selF("open", o.id, "wall", o.wall, wallOpts(r), "Стіна") +
+            '<div class="pl-grid2">' + inp("open", o.id, "pos", o.pos, { label: "Від лівого кута", unit: "см" }) + inp("open", o.id, "width", o.width, { label: "Ширина", unit: "см" }) + inp("open", o.id, "height", o.height, { label: "Висота", unit: "см" }) + (o.kind === "window" ? inp("open", o.id, "sill", o.sill, { label: "Підвіконня", unit: "см" }) : "") + "</div>" +
+            '<button type="button" class="btn ghost small" data-act="delopen" data-id="' + o.id + '">Видалити</button></div>';
+        }).join("") +
+        '<div class="row"><button type="button" class="btn ghost small" data-act="addopen" data-v="door">+ Двері</button><button type="button" class="btn ghost small" data-act="addopen" data-v="window">+ Вікно</button></div>' +
+        '<div class="row"><button type="button" class="btn ghost small" data-act="unsel">← До списку</button><button type="button" class="btn ghost small pl-danger" data-act="delroom" data-id="' + r.id + '">Видалити кімнату</button></div>' +
+        '<p class="meta">«Від лівого кута» — якщо стояти в кімнаті обличчям до стіни.</p></div>';
+    }
+    return h;
+  }
+  function nfm(cm) { return P.nf(cm / 100, 2); }
+
+  // ---------- план (SVG) ----------
+  function bounds() {
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    proj.rooms.forEach(function (r) { x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y); x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h); });
+    if (photo && photo.data && ui.tab === "flat") { x0 = Math.min(x0, 0); y0 = Math.min(y0, 0); x1 = Math.max(x1, photo.w * photo.scale); y1 = Math.max(y1, photo.h * photo.scale); }
+    if (!isFinite(x0)) { x0 = 0; y0 = 0; x1 = 600; y1 = 400; }
+    var pad = 60;
+    return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
+  }
+  function inward(w) { return { N: [0, 1], E: [-1, 0], S: [0, -1], W: [1, 0] }[w]; }
+  function wallPt(r, w, pos, off) { var a = P.wallXY(r, w, pos), n = inward(w); return [a[0] + n[0] * off, a[1] + n[1] * off]; }
+  function ptXY(t) {
+    var r = P.byId(proj.rooms, t.room); if (!r) return null;
+    if (P.KINDS[t.kind].surf === "wall") return wallPt(r, t.wall, t.pos, 14);
+    return [t.x, t.y];
+  }
+  function gcolor(gid) { var i = proj.groups.findIndex(function (g) { return g.id === gid; }); return COLORS[(i < 0 ? 0 : i) % COLORS.length]; }
+
+  function icon(kind, x, y, s, extra) {
+    var c = P.KINDS[kind].cat, h = "";
+    if (kind === "socket") h = '<circle cx="' + x + '" cy="' + y + '" r="' + s + '" class="pi pi-socket"/><circle cx="' + (x - s * .35) + '" cy="' + y + '" r="' + s * .16 + '" class="pi-dot"/><circle cx="' + (x + s * .35) + '" cy="' + y + '" r="' + s * .16 + '" class="pi-dot"/>';
+    else if (kind === "outlet") h = '<rect x="' + (x - s) + '" y="' + (y - s) + '" width="' + 2 * s + '" height="' + 2 * s + '" class="pi pi-power"/><path d="M' + (x + s * .1) + " " + (y - s * .7) + " L" + (x - s * .4) + " " + (y + s * .1) + " L" + (x + s * .1) + " " + (y + s * .1) + " L" + (x - s * .1) + " " + (y + s * .7) + '" class="pi-line"/>';
+    else if (c === "switch") {
+      h = '<circle cx="' + x + '" cy="' + y + '" r="' + s * .8 + '" class="pi pi-switch"/>';
+      var n = kind === "sw2" ? 2 : 1;
+      for (var i = 0; i < n; i++) h += '<line x1="' + (x + s * (.2 + i * .3)) + '" y1="' + (y - s * .2) + '" x2="' + (x + s * (.9 + i * .3)) + '" y2="' + (y - s * 1.2) + '" class="pi-line"/>';
+      if (kind === "pass") h += '<line x1="' + (x - s * .2) + '" y1="' + (y + s * .2) + '" x2="' + (x - s * .9) + '" y2="' + (y + s * 1.2) + '" class="pi-line"/>';
+      if (kind === "cross") h += '<line x1="' + (x - s * .5) + '" y1="' + (y - s * .5) + '" x2="' + (x + s * .5) + '" y2="' + (y + s * .5) + '" class="pi-line"/><line x1="' + (x - s * .5) + '" y1="' + (y + s * .5) + '" x2="' + (x + s * .5) + '" y2="' + (y - s * .5) + '" class="pi-line"/>';
+    } else if (kind === "ceil" || kind === "sconce") {
+      h = '<circle cx="' + x + '" cy="' + y + '" r="' + s * (kind === "ceil" ? 1.15 : .85) + '" class="pi pi-light"/><line x1="' + (x - s * .75) + '" y1="' + (y - s * .75) + '" x2="' + (x + s * .75) + '" y2="' + (y + s * .75) + '" class="pi-line"/><line x1="' + (x - s * .75) + '" y1="' + (y + s * .75) + '" x2="' + (x + s * .75) + '" y2="' + (y - s * .75) + '" class="pi-line"/>';
+    } else if (kind === "spot") h = '<circle cx="' + x + '" cy="' + y + '" r="' + s * .6 + '" class="pi pi-light"/><circle cx="' + x + '" cy="' + y + '" r="' + s * .2 + '" class="pi-dot"/>';
+    else if (kind === "led") h = '<rect x="' + (x - s * 1.2) + '" y="' + (y - s * .45) + '" width="' + 2.4 * s + '" height="' + .9 * s + '" class="pi pi-light"/>';
+    else if (kind === "jbox") h = '<rect x="' + (x - s * .8) + '" y="' + (y - s * .8) + '" width="' + 1.6 * s + '" height="' + 1.6 * s + '" class="pi pi-box"/><circle cx="' + x + '" cy="' + y + '" r="' + s * .25 + '" class="pi-dot"/>';
+    return h;
+  }
+
+  function planSvg(mode) {
+    var b = bounds(); if (!view) view = b;
+    var v = view, s = Math.max(6, Math.min(16, v.w / 70)), fs = Math.max(9, v.w / 75);
+    var c = calc(), bb = bounds(), h = '<svg class="pl-svg pl-plan" data-mode="' + mode + '" viewBox="' + v.x + " " + v.y + " " + v.w + " " + v.h + '" style="--fs:' + fs + "px;aspect-ratio:" + Math.max(0.6, Math.min(2.2, bb.w / bb.h)).toFixed(3) + '">';
+    if (photo && photo.data && mode === "flat") h += '<image href="' + photo.data + '" x="0" y="0" width="' + photo.w * photo.scale + '" height="' + photo.h * photo.scale + '" style="opacity:' + (photo.op || 0.5) + '" preserveAspectRatio="none"/>';
+    // кімнати
+    proj.rooms.forEach(function (r) {
+      var on = sel && sel.t === "room" && sel.id === r.id;
+      h += '<g data-room="' + r.id + '"><rect x="' + r.x + '" y="' + r.y + '" width="' + r.w + '" height="' + r.h + '" class="pl-room t-' + r.type + (on ? " on" : "") + '"/>' +
+        '<text x="' + (r.x + r.w / 2) + '" y="' + (r.y + r.h / 2 - (mode === "flat" ? 0 : fs * 1.4)) + '" class="pl-rname" text-anchor="middle">' + esc(r.name) + "</text>" +
+        (mode === "flat" ? '<text x="' + (r.x + r.w / 2) + '" y="' + (r.y + r.h / 2 + fs * 1.3) + '" class="pl-rdim" text-anchor="middle">' + nfm(r.w) + " × " + nfm(r.h) + " м</text>" : "") + "</g>";
+      if (on && mode === "flat") h += '<rect data-handle="' + r.id + '" x="' + (r.x + r.w - s) + '" y="' + (r.y + r.h - s) + '" width="' + 2 * s + '" height="' + 2 * s + '" class="pl-handle"/>';
+    });
+    // прорізи
+    proj.openings.forEach(function (o) {
+      var r = P.byId(proj.rooms, o.room); if (!r) return;
+      var a = P.wallXY(r, o.wall, o.pos), e = P.wallXY(r, o.wall, o.pos + o.width);
+      h += '<line x1="' + a[0] + '" y1="' + a[1] + '" x2="' + e[0] + '" y2="' + e[1] + '" class="pl-' + o.kind + '"/>';
+    });
+    if (mode !== "flat" && ui.showRoutes) h += routesSvg(c.segs, s);
+    // щит
+    if (proj.panel) {
+      var pr = P.byId(proj.rooms, proj.panel.room);
+      if (pr) { var pp = wallPt(pr, proj.panel.wall, proj.panel.pos, 10); h += '<g data-panel="1" class="pl-pt' + (sel && sel.t === "panel" ? " on" : "") + '"><rect x="' + (pp[0] - s * 1.6) + '" y="' + (pp[1] - s) + '" width="' + 3.2 * s + '" height="' + 2 * s + '" class="pl-panel"/><text x="' + pp[0] + '" y="' + (pp[1] + s * .45) + '" text-anchor="middle" class="pl-ptext">Щ</text></g>'; }
+    }
+    if (mode !== "flat") {
+      var bad = {}; c.issues.forEach(function (i) { if (i.ref) bad[i.ref] = bad[i.ref] === "error" ? "error" : i.lvl; });
+      proj.points.forEach(function (t) {
+        var q = ptXY(t); if (!q) return;
+        var on = sel && sel.t === "point" && sel.id === t.id, isC = P.KINDS[t.kind].surf === "ceiling";
+        var dim = (ui.layer === "ceiling" && !isC) || (ui.layer === "walls" && isC);
+        var hl = sel && sel.t === "point" && related(sel.id, t);
+        h += '<g data-pt="' + t.id + '" class="pl-pt' + (on ? " on" : "") + (hl ? " rel" : "") + (dim ? " dim" : "") + (bad[t.id] ? " " + bad[t.id] : "") + '" style="--g:' + (t.group ? gcolor(t.group) : "var(--muted)") + '">' +
+          (on || hl ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * 1.9 + '" class="pl-ring"/>' : "") + icon(t.kind, q[0], q[1], s) + "</g>";
+      });
+    }
+    if (drawRect) h += '<rect x="' + Math.min(drawRect[0], drawRect[2]) + '" y="' + Math.min(drawRect[1], drawRect[3]) + '" width="' + Math.abs(drawRect[2] - drawRect[0]) + '" height="' + Math.abs(drawRect[3] - drawRect[1]) + '" class="pl-draw"/>';
+    if (calib) calib.forEach(function (q) { h += '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * .6 + '" class="pl-calib"/>'; });
+    return h + "</svg>";
+  }
+  // точки, пов'язані з виділеною (вимикач ↔ світильники)
+  function related(id, t) {
+    var s = P.byId(proj.points, id); if (!s || s.id === t.id) return false;
+    if ((t.ctl || []).some(function (c) { return c.sw === id; })) return true;
+    if ((s.ctl || []).some(function (c) { return c.sw === t.id; })) return true;
+    return false;
+  }
+  function routesSvg(segs, s) {
+    var h = '<g class="pl-routes">';
+    segs.forEach(function (g) {
+      if (ui.gfilter && g.group !== ui.gfilter) return;
+      var col = gcolor(g.group), cls = "pl-route p-" + g.plane, off = g.plane === "wallBottom" ? 22 : 6 + (proj.groups.findIndex(function (x) { return x.id === g.group; }) % 4) * 2.5;
+      var hit = ' data-seg="' + esc(g.key) + '"';
+      if (g.line) h += '<line' + hit + ' x1="' + g.line[0][0] + '" y1="' + g.line[0][1] + '" x2="' + g.line[1][0] + '" y2="' + g.line[1][1] + '" class="' + cls + '" style="stroke:' + col + '"/>';
+      g.pieces.forEach(function (pc) {
+        var r = P.byId(proj.rooms, pc.room), a = wallPt(r, pc.wall, pc.p0, off), e = wallPt(r, pc.wall, pc.p1, off);
+        h += '<line' + hit + ' x1="' + a[0] + '" y1="' + a[1] + '" x2="' + e[0] + '" y2="' + e[1] + '" class="' + cls + '" style="stroke:' + col + '"/>';
+      });
+      (g.ceilStub || []).forEach(function (cs) { var a = wallPt(cs[2], cs[3], cs[4], off); h += '<line' + hit + ' x1="' + a[0] + '" y1="' + a[1] + '" x2="' + cs[0] + '" y2="' + cs[1] + '" class="pl-route p-ceiling" style="stroke:' + col + '"/>'; });
+      g.holes.forEach(function (o) { h += '<circle cx="' + o.x + '" cy="' + o.y + '" r="' + s * .45 + '" class="pl-hole"/>'; });
+    });
+    return h + "</g>";
+  }
+
+  // ---------- вкладка «План і стеля» ----------
+  function planTab() {
+    var kinds = ui.layer === "ceiling" ? CEIL_KINDS : WALL_KINDS;
+    var h = '<div class="pl-cols"><div class="pl-main"><div class="pl-bar">' +
+      '<span class="pl-seg"><button type="button" data-layer="ceiling" class="' + (ui.layer === "ceiling" ? "on" : "") + '">Стеля</button><button type="button" data-layer="walls" class="' + (ui.layer === "walls" ? "on" : "") + '">Стіни</button></span>' +
+      '<button type="button" data-tool="select" class="' + (ui.tool === "select" ? "on" : "") + '">✥ Вибір</button>' +
+      kinds.map(function (k) { return '<button type="button" data-tool="add:' + k + '" class="' + (ui.tool === "add:" + k ? "on" : "") + '">+ ' + SHORT[k] + "</button>"; }).join("") +
+      (ui.layer === "walls" ? '<button type="button" data-tool="ac" class="' + (ui.tool === "ac" ? "on" : "") + '">+ Кондиціонер</button>' : "") +
+      (ui.layer === "walls" ? '<button type="button" data-tool="panel" class="' + (ui.tool === "panel" ? "on" : "") + '">Щит сюди</button>' : "") +
+      '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button>' + zoomBtns() + "</div>" +
+      '<div class="pl-bar pl-bar2"><label class="pl-barbtn"><input type="checkbox" data-act="routes"' + (ui.showRoutes ? " checked" : "") + "> Траси</label>" +
+      '<label class="pl-barbtn">Група <select data-act="gfilter"><option value="">усі</option>' + proj.groups.map(function (g) { return '<option value="' + g.id + '"' + (ui.gfilter === g.id ? " selected" : "") + ">" + esc(g.name) + "</option>"; }).join("") + "</select></label>" +
+      '<span class="pl-legend"><i class="lg-wall"></i>по стіні <i class="lg-ceil"></i>по стелі <i class="lg-floor"></i>по підлозі <i class="lg-hole"></i>отвір у стіні</span></div>' +
+      (ui.tool === "ac" ? '<p class="pl-help">Клікни всередині кімнати — планувальник підбере кондиціонер за площею, поставить вивід під стелею і створить окрему лінію з автоматом і кабелем.</p>' : "") +
+      (ui.tool.indexOf("add:") === 0 ? '<p class="pl-help">' + (ui.tool === "add:ceil" || ui.tool === "add:spot" ? "Клікни всередині кімнати — світильник стане в цю точку стелі." : "Клікни біля стіни — точка стане на найближчу стіну з типовою висотою. Висоту і відстань уточниш справа або у вкладці «Стіни».") + "</p>" : "") +
+      planSvg("plan") + '</div><div class="pl-side">' + pointSide() + "</div></div>";
+    return h;
+  }
+
+  function defaultGroup(t) {
+    var cat = P.KINDS[t.kind].cat;
+    if (cat === "light" || cat === "switch" || cat === "box") { var g = proj.groups.filter(function (x) { return x.kind === "light"; })[0]; return g ? g.id : null; }
+    if (cat === "socket") {
+      var same = proj.points.filter(function (x) { return x.kind === "socket" && x.room === t.room && x.group && x.id !== t.id; })[0];
+      if (same) return same.group;
+      var sg = proj.groups.filter(function (x) { return x.kind === "socket"; })[0]; return sg ? sg.id : null;
+    }
+    return null;
+  }
+
+  function pointSide() {
+    var c = calc();
+    if (sel && sel.t === "panel") return '<div class="card pl-card"><h3>Щит</h3>' + panelFields() + hint("panel", true) + "</div>";
+    var t = sel && sel.t === "point" ? P.byId(proj.points, sel.id) : null;
+    if (!t) {
+      var errs = c.issues.filter(function (i) { return i.lvl === "error"; });
+      return '<div class="card pl-card"><h3>Як користуватись</h3><ul class="pl-ul"><li>Перемикач <b>Стеля / Стіни</b> обирає, що редагувати і що додавати.</li><li>Клікни точку — побачиш її параметри, з\'єднання і пояснення «Чому так».</li><li>Перетягуй точки; на телефоні — пальцем. Порожнє місце тягни, щоб посунути план.</li><li>Колір траси — колір групи. Клікни трасу, щоб змінити спосіб прокладання саме цього відрізка.</li></ul>' +
+        (errs.length ? '<div class="warn">Помилок у проєкті: ' + errs.length + '. <a href="javascript:void 0" data-tab="groups">Переглянути</a></div>' : '<div class="tip">Помилок немає.</div>') + "</div>" + segSide();
+    }
+    var K = P.KINDS[t.kind], r = P.byId(proj.rooms, t.room), h = '<div class="card pl-card"><h3>' + esc(P.labelRef(proj, t.id)) + "</h3>";
+    if (K.surf === "wall") h += selF("point", t.id, "wall", t.wall, wallOpts(r), "Стіна") + '<div class="pl-grid2">' + inp("point", t.id, "pos", t.pos, { label: "Від лівого кута", unit: "см" }) + inp("point", t.id, "h", t.h, { label: "Висота від підлоги", unit: "см" }) + "</div>";
+    else h += '<div class="pl-grid2">' + inp("point", t.id, "rx", t.x - r.x, { label: "Від лівої стіни", unit: "см" }) + inp("point", t.id, "ry", t.y - r.y, { label: "Від верхньої стіни", unit: "см" }) + "</div>";
+    if (t.kind === "socket") h += selF("point", t.id, "gang", t.gang, [[1, "1 пост"], [2, "2 пости (блок)"], [3, "3 пости"], [4, "4 пости"]], "Кількість постів");
+    if (t.kind === "socket" || t.kind === "outlet") h += selF("device", t.id, "device", t.device || "", P.DEVICES.map(function (d) { return [d.id, d.name + (d.P ? " — " + P.nf(d.P / 1000, 1) + " кВт" : "")]; }), "Що сюди ввімкнуть");
+    if (t.kind === "socket" || t.kind === "outlet" || K.cat === "light") h += inp("point", t.id, "power", t.power || 0, { label: K.cat === "light" ? "Потужність" : "Прилад (потужність, якщо відомо)", unit: "Вт" });
+    h += inp("point", t.id, "label", t.label || "", { label: "Підпис", str: true });
+    h += selF("point", t.id, "group", t.group || "", [["", "— не призначено —"]].concat(proj.groups.map(function (g) { return [g.id, g.name]; })), "Група (автомат у щиті)") +
+      '<button type="button" class="btn ghost small" data-act="newgroup" data-id="' + t.id + '">+ Нова група для цієї точки</button>';
+    if (K.cat === "light") {
+      var sws = proj.points.filter(function (x) { return P.KINDS[x.kind].cat === "switch"; });
+      h += "<h4>Чим вмикається</h4>" + (sws.length ? sws.map(function (s) {
+        var c1 = (t.ctl || []).filter(function (c) { return c.sw === s.id; })[0];
+        return '<label class="pl-f pl-chk"><input type="checkbox" data-act="ctl" data-id="' + t.id + '" data-sw="' + s.id + '"' + (c1 ? " checked" : "") + "> " + esc(P.labelRef(proj, s.id)) + "</label>" +
+          (s.kind === "sw2" && c1 ? selF("ctlkey", t.id + "|" + s.id, "key", c1.key, [[1, "клавіша 1"], [2, "клавіша 2"]], "") : "");
+      }).join("") : "<p class='meta'>Додай вимикач на стіні.</p>") + '<p class="meta">Два прохідні (і перехресні між ними) — керування з кількох місць.</p>';
+    }
+    if (K.cat === "switch") {
+      var ls = proj.points.filter(function (l) { return (l.ctl || []).some(function (c) { return c.sw === t.id; }); });
+      h += "<h4>Що вмикає</h4>" + (ls.length ? "<ul class='pl-ul'>" + ls.map(function (l) { return "<li>" + esc(P.labelRef(proj, l.id)) + "</li>"; }).join("") + "</ul>" : "<p class='meta'>Нічого. Обери світильник і познач цей вимикач у «Чим вмикається».</p>");
+    }
+    if (t.group) h += groupLoadLine(t.group);
+    if (t.device && P.device(t.device) && P.device(t.device).ac) h += hint("ac");
+    var iss = c.issues.filter(function (i) { return i.ref === t.id; });
+    if (iss.length) h += iss.map(issueHtml).join("");
+    // кабель до точки
+    var seg = c.segs.filter(function (s) { return s.b === t.id; })[0];
+    if (seg) h += "<h4>Кабель до точки</h4><p>Від «" + esc(P.labelRef(proj, seg.a)) + "»: <b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м</p>" + planeSel(seg);
+    h += connHtml(t) + hint(hintKey(t)) + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
+    return h;
+  }
+  function hintKey(t) { return t.kind; }
+  function loadOf(gid) { return P.load(proj, calc().segs).filter(function (x) { return x.g.id === gid; })[0]; }
+  function bar(pct) { var c = pct > 1 ? "lv-bad" : pct > 0.8 ? "lv-warn" : "lv-ok"; return '<span class="pl-bar-l ' + c + '"><i style="width:' + Math.min(100, Math.round(pct * 100)) + '%"></i></span>'; }
+  function groupLoadLine(gid) {
+    var x = loadOf(gid); if (!x) return "";
+    return '<div class="pl-loadline">Група «' + esc(x.g.name) + "»: " + P.nf(x.P, 0) + " Вт → " + P.nf(x.I, 2) + " А з " + x.g.In + " А " + bar(x.pct) + " " + Math.round(x.pct * 100) + " %</div>";
+  }
+  function planeSel(seg) {
+    var g = P.byId(proj.groups, seg.group), ov = proj.over[seg.key];
+    return selF("seg", seg.key, "plane", ov || "", [["", "як у групі (" + P.PLANES[g.plane].toLowerCase() + ")"]].concat(Object.keys(P.PLANES).map(function (k) { return [k, P.PLANES[k]]; })), "Як прокласти цей відрізок");
+  }
+  function segSide() {
+    if (!sel || sel.t !== "seg") return "";
+    var seg = calc().segs.filter(function (s) { return s.key === sel.id; })[0]; if (!seg) return "";
+    return '<div class="card pl-card"><h3>Відрізок траси</h3><p>' + esc(P.labelRef(proj, seg.a)) + " → " + esc(P.labelRef(proj, seg.b)) + "</p><p><b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м (горизонталь " + P.nf(seg.horiz / 100) + " м, спуски " + P.nf(seg.drops / 100) + " м)</p>" + planeSel(seg) + hint(seg.plane, true) + hint("cable") + "</div>";
+  }
+  function dot(c) { return c ? '<i class="pl-dotc" style="background:' + P.COLOR_HEX[c] + '"></i>' : '<i class="pl-dotc none"></i>'; }
+  function connHtml(t) {
+    var cn = P.connections(proj, calc().segs);
+    if (t.kind === "jbox") { var b = cn.boxes.filter(function (x) { return x.id === t.id; })[0]; return b ? "<h4>З'єднання в коробці</h4>" + boxHtml(b) : ""; }
+    var lines = cn.points[t.id]; if (!lines) return "";
+    return "<h4>Як під'єднати</h4><ul class='pl-conn'>" + lines.map(function (l) { return "<li>" + dot(l.color) + esc(l.text) + "</li>"; }).join("") + "</ul>" + (t.kind === "socket" && lines.length > 3 ? hint("loop") : "");
+  }
+  function boxHtml(b) {
+    return '<div class="pl-joins">' + b.joins.map(function (j) {
+      return '<div class="pl-join"><div class="pl-jt"><b>' + esc(j.title) + '</b><span class="tag">WAGO на ' + j.wago + "</span></div><ul>" +
+        j.wires.map(function (w) { return "<li>" + dot(w.color) + esc(P.COLORS[w.color]) + " <b>" + esc(w.core) + "</b> — кабель " + esc(w.cable) + " ↔ " + esc(w.from) + (w.mark ? " <em>(" + esc(w.mark) + ")</em>" : "") + "</li>"; }).join("") + "</ul>" + (j.note ? '<p class="meta">' + esc(j.note) + "</p>" : "") + "</div>";
+    }).join("") + (b.unused.length ? '<ul class="pl-unused">' + b.unused.map(function (u) { return "<li>" + esc(u) + "</li>"; }).join("") + "</ul>" : "") + "</div>";
+  }
+  function issueHtml(i) {
+    var hh = P.hintFor(i);
+    return '<div class="' + (i.lvl === "error" ? "warn" : "note") + ' pl-issue">' + (i.lvl === "error" ? "✗ " : "⚠ ") + esc(i.msg) +
+      (i.ref && P.byId(proj.points, i.ref) ? ' <a href="javascript:void 0" data-act="goto" data-id="' + i.ref + '">показати</a>' : "") +
+      (hh ? '<details class="pl-hint"><summary>💡 Чому так</summary>' + hh.h + '<div class="pl-links">' + lessonLinks(hh.l) + "</div></details>" : "") + "</div>";
+  }
+  function panelFields() {
+    var r = P.byId(proj.rooms, proj.panel.room);
+    return selF("panelf", "", "room", proj.panel.room, proj.rooms.map(function (q) { return [q.id, q.name]; }), "Кімната") + selF("panelf", "", "wall", proj.panel.wall, wallOpts(r), "Стіна") +
+      '<div class="pl-grid2">' + inp("panelf", "", "pos", proj.panel.pos, { label: "Від лівого кута", unit: "см" }) + inp("panelf", "", "h", proj.panel.h, { label: "Низ корпусу", unit: "см" }) + "</div>";
+  }
+
+  // ---------- вкладка «Стіни» ----------
+  function wallsTab() {
+    var r = P.byId(proj.rooms, ui.wallRoom); if (!r) { r = proj.rooms[0]; if (!r) return "<p>Немає кімнат.</p>"; ui.wall = busiestWall(r); }
+    ui.wallRoom = r.id;
+    var h = '<div class="pl-cols"><div class="pl-main"><div class="pl-bar"><label class="pl-barbtn">Кімната <select data-act="wroom">' + proj.rooms.map(function (q) { return '<option value="' + q.id + '"' + (q.id === r.id ? " selected" : "") + ">" + esc(q.name) + "</option>"; }).join("") + "</select></label>" +
+      '<span class="pl-seg">' + P.WALLS.map(function (w) { return '<button type="button" data-wall="' + w + '" class="' + (ui.wall === w ? "on" : "") + '">' + P.WALL_NAME[w] + " " + P.nf(P.wallLen(r, w) / 100, 2) + " м</button>"; }).join("") + "</span></div>" +
+      '<div class="pl-bar"><button type="button" data-tool="select" class="' + (ui.tool === "select" ? "on" : "") + '">✥ Вибір</button>' + WALL_KINDS.map(function (k) { return '<button type="button" data-tool="add:' + k + '" class="' + (ui.tool === "add:" + k ? "on" : "") + '">+ ' + SHORT[k] + "</button>"; }).join("") + '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button></div>' +
+      '<p class="pl-help">Вигляд зсередини кімнати. Розміри — від лівого кута і від чистової підлоги. Пунктир — зона горизонтальних трас (' + P.ZONE_TOP + " см під стелею і ~" + P.ZONE_BOT + " см над підлогою).</p>" +
+      elevSvg(r, ui.wall) + mini(r) + '</div><div class="pl-side">' + pointSide() + hint("wallTop") + "</div></div>";
+    return h;
+  }
+  function busiestWall(r) {
+    var best = "N", n = -1;
+    P.WALLS.forEach(function (w) { var k = proj.points.filter(function (t) { return t.room === r.id && t.wall === w; }).length; if (k > n) { n = k; best = w; } });
+    return best;
+  }
+  function mini(r) {
+    return '<p class="meta">Кімната «' + esc(r.name) + "»: стіни обходяться за годинниковою стрілкою — верхня, права, нижня, ліва (як на плані).</p>";
+  }
+  function elevSvg(r, w) {
+    var L = P.wallLen(r, w), H = proj.ceilH, c = calc(), s = Math.max(7, L / 55), fs = Math.max(9, L / 60);
+    var ops = P.openingsOn(proj, r, w), pts = proj.points.filter(function (t) { return t.room === r.id && P.KINDS[t.kind].surf === "wall" && t.wall === w; });
+    var Y = function (z) { return H - z; };
+    var h = '<svg class="pl-svg pl-elev" data-room="' + r.id + '" data-wall="' + w + '" viewBox="' + (-40) + " " + (-40) + " " + (L + 80) + " " + (H + 110) + '" style="--fs:' + fs + 'px">';
+    h += '<rect x="0" y="0" width="' + L + '" height="' + H + '" class="pl-wallr"/>';
+    h += '<line x1="0" y1="' + P.ZONE_TOP + '" x2="' + L + '" y2="' + P.ZONE_TOP + '" class="pl-zone"/><line x1="0" y1="' + Y(P.ZONE_BOT) + '" x2="' + L + '" y2="' + Y(P.ZONE_BOT) + '" class="pl-zone"/>';
+    ops.forEach(function (o) {
+      var z0 = o.kind === "door" ? 0 : o.sill;
+      h += '<rect x="' + o.pos + '" y="' + Y(z0 + o.height) + '" width="' + o.width + '" height="' + o.height + '" class="pl-op ' + o.kind + '"/><text x="' + (o.pos + o.width / 2) + '" y="' + Y(z0 + o.height / 2) + '" text-anchor="middle" class="pl-optext">' + (o.kind === "door" ? "двері" : "вікно") + "</text>";
+    });
+    if (proj.panel && proj.panel.room === r.id && proj.panel.wall === w) h += '<g data-panel="1"><rect x="' + (proj.panel.pos - 20) + '" y="' + Y(proj.panel.h + 50) + '" width="40" height="50" class="pl-panel"/><text x="' + proj.panel.pos + '" y="' + Y(proj.panel.h + 22) + '" text-anchor="middle" class="pl-ptext">Щит</text></g>';
+    c.segs.forEach(function (g) {
+      var col = gcolor(g.group);
+      g.pieces.forEach(function (pc) { if (pc.room === r.id && pc.wall === w) h += '<line data-seg="' + esc(g.key) + '" x1="' + pc.p0 + '" y1="' + Y(pc.z) + '" x2="' + pc.p1 + '" y2="' + Y(pc.z) + '" class="pl-route" style="stroke:' + col + '"/>'; });
+      g.verts.forEach(function (vv) { if (vv.room === r.id && vv.wall === w) h += '<line data-seg="' + esc(g.key) + '" x1="' + vv.pos + '" y1="' + Y(vv.z0) + '" x2="' + vv.pos + '" y2="' + Y(vv.z1) + '" class="pl-route" style="stroke:' + col + '"/>'; });
+    });
+    // розміри
+    var dims = pts.slice().sort(function (a, b) { return a.pos - b.pos; });
+    dims.forEach(function (t, i) {
+      var yy = H + 22 + (i % 2) * 22;
+      h += '<line x1="' + t.pos + '" y1="' + H + '" x2="' + t.pos + '" y2="' + (yy - 8) + '" class="pl-dimline"/><text x="' + t.pos + '" y="' + yy + '" text-anchor="middle" class="pl-dim">' + Math.round(t.pos) + "</text>";
+    });
+    pts.forEach(function (t) {
+      var on = sel && sel.t === "point" && sel.id === t.id;
+      h += '<g data-pt="' + t.id + '" class="pl-pt' + (on ? " on" : "") + '" style="--g:' + (t.group ? gcolor(t.group) : "var(--muted)") + '">' + (on ? '<circle cx="' + t.pos + '" cy="' + Y(t.h) + '" r="' + s * 1.9 + '" class="pl-ring"/>' : "") + icon(t.kind, t.pos, Y(t.h), s) +
+        '<text x="' + (t.pos + s * 1.6) + '" y="' + (Y(t.h) - s * 1.1) + '" class="pl-dim">' + P.tagOf(proj, t) + " · h" + Math.round(t.h) + "</text></g>";
+    });
+    h += '<text x="0" y="' + (H + 80) + '" class="pl-dim">← лівий кут</text><text x="' + L + '" y="' + (H + 80) + '" text-anchor="end" class="pl-dim">правий кут →</text>';
+    return h + "</svg>";
+  }
+
+  // ---------- вкладка «Групи і щит» ----------
+  function groupsTab() {
+    var c = calc(), pn = P.panel(proj), segs = c.segs;
+    var h = '<div class="card pl-card"><h3>Групи</h3><div class="pl-tablewrap"><table class="pl-gt"><tr><th>Гр.</th><th>Назва</th><th>Тип</th><th>Автомат</th><th>Кабель</th><th>Захист</th><th>Прокладання</th><th>Точок / м / кВт</th><th></th></tr>';
+    proj.groups.forEach(function (g, i) {
+      var pts = proj.points.filter(function (t) { return t.group === g.id; }), len = segs.filter(function (s) { return s.group === g.id; }).reduce(function (a, s) { return a + s.len; }, 0) / 100;
+      var kw = pts.reduce(function (a, t) { return a + (t.power || 0); }, 0) / 1000;
+      h += '<tr><td><i class="pl-gc" style="background:' + gcolor(g.id) + '"></i>' + (i + 1) + "</td><td>" + inp("group", g.id, "name", g.name, { label: "", str: true }) + "</td><td>" +
+        selF("group", g.id, "kind", g.kind, Object.keys(P.GROUP_KINDS).map(function (k) { return [k, P.GROUP_KINDS[k]]; }), "") + "</td><td class='pl-nowrap'>" +
+        selF("group", g.id, "curve", g.curve, [["B", "B"], ["C", "C"]], "") + selF("group", g.id, "In", g.In, P.BREAKERS.map(function (b) { return [b, b + " А"]; }), "") + "</td><td>" +
+        selF("group", g.id, "sec", g.sec, P.SECTIONS.map(function (s) { return [s, String(s).replace(".", ",") + " мм²"]; }), "") + "</td><td>" +
+        selF("group", g.id, "prot", g.prot, [["none", "без ПЗВ"], ["rcd", "через ПЗВ"], ["rcbo", "дифавтомат"]], "") +
+        (g.prot === "rcd" ? selF("group", g.id, "rcd", g.rcd || "", [["", "— обери ПЗВ —"]].concat(proj.rcds.map(function (q, k) { return [q.id, "ПЗВ " + (k + 1) + " (" + q.In + " А, " + q.dI + " мА)"]; })), "") : "") +
+        (g.prot === "rcbo" ? selF("group", g.id, "dI", g.dI, [[10, "10 мА"], [30, "30 мА"]], "") : "") + "</td><td>" +
+        selF("group", g.id, "plane", g.plane, Object.keys(P.PLANES).map(function (k) { return [k, P.PLANES[k]]; }), "") + "</td><td class='pl-nowrap'>" + pts.length + " / " + P.nf(len) + " / " + P.nf(kw, 1) + "</td><td>" +
+        '<button type="button" class="pl-x" data-act="delgroup" data-id="' + g.id + '" title="Видалити групу">✕</button></td></tr>';
+    });
+    h += '</table></div><div class="row"><button type="button" class="btn ghost small" data-act="addgroup">+ Група</button><button type="button" class="btn ghost small" data-act="addrcd">+ ПЗВ</button></div>';
+    h += '<div class="pl-rcds">' + proj.rcds.map(function (q, k) {
+      return '<div class="pl-rcd"><b>ПЗВ ' + (k + 1) + "</b>" + selF("rcd", q.id, "In", q.In, [[25, "25 А"], [40, "40 А"], [63, "63 А"]], "") + selF("rcd", q.id, "dI", q.dI, [[10, "10 мА"], [30, "30 мА"], [100, "100 мА"]], "") + selF("rcd", q.id, "type", q.type, [["A", "тип A"], ["AC", "тип AC"]], "") + '<button type="button" class="pl-x" data-act="delrcd" data-id="' + q.id + '">✕</button></div>';
+    }).join("") + "</div>" + '<div class="pl-hints3">' + hint("light") + hint("socketG") + hint("power") + hint("rcd") + hint("rcbo") + hint("cable") + "</div></div>";
+    var L = P.load(proj, segs);
+    h += '<div class="card pl-card"><h3>Навантаження груп</h3><p class="meta">Потужність кожної точки задається в її картці (світильник — потужність ламп, розетка — прилад). Струм I = P / 230; ΔU — падіння напруги до найдальшої точки, якщо все ввімкнено.</p><div class="pl-tablewrap"><table class="pl-lt"><tr><th>Група</th><th>Ламп / точок</th><th>P</th><th>I</th><th>Автомат</th><th>Завантаження</th><th>Кабель до найдальшої</th><th>ΔU</th><th></th></tr>' +
+      L.map(function (x) {
+        var ok = x.pct <= 1 && x.dUpct <= 5;
+        var noDev = !x.P && x.g.kind !== "light";
+        return "<tr><td>" + esc(x.g.name) + "</td><td>" + x.lights + " / " + x.pts.length + "</td><td class='pl-nowrap'>" + (noDev ? "<span class='meta'>вкажи прилади в розетках</span>" : P.nf(x.P, 0) + " Вт") + "</td><td class='pl-nowrap'>" + P.nf(x.I, 2) + " А</td><td>" + x.g.curve + x.g.In + "</td><td class='pl-nowrap'>" + bar(x.pct) + " " + Math.round(x.pct * 100) + " %</td><td class='pl-nowrap'>" + P.nf(x.L, 1) + " м · " + String(x.g.sec).replace(".", ",") + " мм²</td><td>" + P.nf(x.dUpct, 1) + " %</td><td>" +
+          (x.g.kind === "power" && x.P ? '<button type="button" class="btn ghost small" data-act="suggest" data-id="' + x.g.id + '">Підібрати</button>' : (ok ? "✓" : "⚠")) + "</td></tr>";
+      }).join("") + "</table></div>" +
+      "<p class='meta'>Усе ввімкнено разом: " + P.nf(L.reduce(function (s, x) { return s + x.P; }, 0) / 1000, 1) + " кВт. Одночасно працює лише частина приладів, тому сума груп може перевищувати ввідний C" + proj.input + " (" + P.nf(230 * proj.input / 1000, 1) + " кВт) — це нормально, якщо кожна група в межах свого автомата.</p>" + hint("load", true) + hint("ac") + "</div>";
+    var errs = c.issues.filter(function (i) { return i.lvl === "error"; }), warns = c.issues.filter(function (i) { return i.lvl !== "error"; });
+    h += '<div class="card pl-card"><h3>Перевірка проєкту</h3>' + (c.issues.length ? errs.concat(warns).map(issueHtml).join("") : '<div class="tip">✓ Помилок і зауважень немає.</div>') + "</div>";
+    h += '<div class="card pl-card"><h3>Щит: ' + pn.enclosure + " модулів</h3><p>Апарати займають " + pn.modules + " модулів, з запасом 20–30 % потрібно ≥ " + pn.need + ".</p>" + panelSvg(pn) + din(pn) + hint("panel") + "</div>";
+    return h;
+  }
+  function panelSvg(pn) {
+    var cols = pn.devices.filter(function (d) { return d.group || d.rcd; }), W = Math.max(cols.length, 3) * 120 + 40, h = '<div class="pl-tablewrap"><svg class="pl-svg pl-sld" viewBox="0 0 ' + W + ' 430" style="--fs:12px">';
+    h += '<text x="20" y="22" class="pl-dim">Ввід ' + esc(proj.system) + "</text>";
+    function dev(x, y, d) { return '<rect x="' + (x - 46) + '" y="' + y + '" width="92" height="46" class="pl-dev"/><text x="' + x + '" y="' + (y + 18) + '" text-anchor="middle" class="pl-ptext">' + d.tag + '</text><text x="' + x + '" y="' + (y + 36) + '" text-anchor="middle" class="pl-dim">' + esc(d.spec.split(",")[0]) + "</text>"; }
+    var main = pn.devices.filter(function (d) { return !d.group && !d.rcd; }), y = 30;
+    main.forEach(function (d) { h += '<line x1="60" y1="' + (y - 4) + '" x2="60" y2="' + y + '" class="pl-wire"/>' + dev(60, y, d); y += 60; });
+    var busY = y + 10;
+    h += '<line x1="60" y1="' + (y - 14) + '" x2="60" y2="' + busY + '" class="pl-wire"/><line x1="60" y1="' + busY + '" x2="' + (W - 30) + '" y2="' + busY + '" class="pl-wire bus"/>';
+    var x = 160, under = {};
+    pn.devices.forEach(function (d) {
+      if (d.rcd) { under[d.tag] = { x: x }; h += '<line x1="' + x + '" y1="' + busY + '" x2="' + x + '" y2="' + (busY + 16) + '" class="pl-wire"/>' + dev(x, busY + 16, d); }
+      else if (d.group) {
+        var gy = d.under ? busY + 100 : busY + 16, parent = d.under ? under[d.tag && d.under] : null;
+        if (d.under && parent) { if (parent.used) x += 0; parent.used = true; h += '<line x1="' + parent.x + '" y1="' + (busY + 62) + '" x2="' + parent.x + '" y2="' + (busY + 80) + '" class="pl-wire"/><line x1="' + parent.x + '" y1="' + (busY + 80) + '" x2="' + x + '" y2="' + (busY + 80) + '" class="pl-wire"/><line x1="' + x + '" y1="' + (busY + 80) + '" x2="' + x + '" y2="' + gy + '" class="pl-wire"/>'; }
+        else h += '<line x1="' + x + '" y1="' + busY + '" x2="' + x + '" y2="' + gy + '" class="pl-wire"/>';
+        h += dev(x, gy, d) + '<line x1="' + x + '" y1="' + (gy + 46) + '" x2="' + x + '" y2="' + (gy + 70) + '" class="pl-wire" style="stroke:' + gcolor(d.group) + '"/>' +
+          '<text x="' + x + '" y="' + (gy + 84) + '" text-anchor="middle" class="pl-dim">' + esc(d.name.slice(0, 18)) + "</text>" + '<text x="' + x + '" y="' + (gy + 98) + '" text-anchor="middle" class="pl-dim">' + esc((d.spec.split(", ")[1] || "").replace("дифавтомат ", "")) + "</text>";
+        x += 120;
+      }
+    });
+    return h + "</svg></div>";
+  }
+  function din(pn) {
+    return '<div class="pl-din">' + pn.rows.map(function (row, i) {
+      var used = row.reduce(function (a, d) { return a + d.mod; }, 0);
+      return '<div class="pl-dinrow"><span class="meta">Ряд ' + (i + 1) + "</span>" + row.map(function (d) { return '<span class="pl-mod" style="flex:' + d.mod + '" title="' + esc(d.name + " — " + d.spec) + '">' + d.tag + "</span>"; }).join("") + (pn.perRow - used > 0 ? '<span class="pl-mod free" style="flex:' + (pn.perRow - used) + '">запас</span>' : "") + "</div>";
+    }).join("") + "</div>";
+  }
+
+  // ---------- вкладка «З'єднання» ----------
+  function wiringTab() {
+    var cn = P.connections(proj, calc().segs), h = '<div class="card pl-card"><h3>Кольори жил</h3><p>' + Object.keys(P.COLORS).map(function (k) { return dot(k) + esc(P.COLORS[k]); }).join(" &nbsp; ") + "</p>" + hint("cable") + hint("wago") + "</div>";
+    cn.boxes.forEach(function (b) { h += '<div class="card pl-card"><h3>' + esc(b.label) + "</h3>" + boxHtml(b) + "</div>"; });
+    h += '<div class="card pl-card"><h3>Щит</h3>' + cn.panel.map(function (x) { return "<h4>" + x.tag + " — " + esc(x.group) + "</h4><ul class='pl-conn'>" + x.lines.map(function (l) { return "<li>" + dot(l.color) + esc(l.text) + "</li>"; }).join("") + "</ul>"; }).join("") + "</div>";
+    proj.rooms.forEach(function (r) {
+      var pts = proj.points.filter(function (t) { return t.room === r.id && t.kind !== "jbox"; });
+      if (!pts.length) return;
+      h += '<details class="card pl-card"><summary><b>Точки: ' + esc(r.name) + "</b> (" + pts.length + ")</summary>" + pts.map(function (t) {
+        return "<h4>" + esc(P.labelRef(proj, t.id)) + "</h4><ul class='pl-conn'>" + (cn.points[t.id] || []).map(function (l) { return "<li>" + dot(l.color) + esc(l.text) + "</li>"; }).join("") + "</ul>";
+      }).join("") + "</details>";
+    });
+    return h;
+  }
+
+  // ---------- вкладка «Матеріали» ----------
+  function specTab() {
+    var sp = P.spec(proj, calc().segs);
+    function tbl(title, rows) { if (!rows.length) return ""; return "<h3>" + title + "</h3><table><tr><th>Найменування</th><th>К-сть</th><th>Примітка</th></tr>" + rows.map(function (r) { return "<tr><td>" + esc(r.name) + "</td><td class='pl-nowrap'>" + r.qty + " " + r.unit + "</td><td>" + esc(r.note || "") + "</td></tr>"; }).join("") + "</table>"; }
+    return '<div class="card pl-card pl-print"><div class="row"><button type="button" class="btn ghost small" data-act="print">🖨 Друк</button><span class="meta">Траси разом: ' + P.nf(sp.totalM) + " м</span></div>" +
+      tbl("Кабель і гофра", sp.cables.concat(sp.tubes)) + tbl("Монтаж (чорновий)", sp.boxes) + tbl("Чистовий монтаж", sp.finish) + tbl("Щит", sp.panel) +
+      '<p class="meta">Кількості орієнтовні: перед закупівлею звір з фактичними трасами на об\'єкті. Інструмент — див. урок «Перший набір інструменту».</p>' + lessonLinks([["r1", "l4"], ["m05", "l5"]]) + "</div>";
+  }
+
+  // ---------- вкладка «План робіт» ----------
+  function stepsTab() {
+    var st = P.steps(proj), done = proj.done || {};
+    var n = st.filter(function (s) { return done[s.id]; }).length;
+    return '<div class="card pl-card"><div class="row"><b>Виконано ' + n + " з " + st.length + '</b><button type="button" class="btn ghost small" data-act="print">🖨 Друк</button></div><div class="pl-progress"><i style="width:' + Math.round(n / st.length * 100) + '%"></i></div></div>' +
+      st.map(function (s, i) {
+        return '<details class="card pl-card pl-step' + (done[s.id] ? " done" : "") + '"' + (i === 0 || (!done[s.id] && st.slice(0, i).every(function (x) { return done[x.id]; })) ? " open" : "") + "><summary><span class='pl-stepn'>" + (i + 1) + "</span> " + esc(s.title) + (done[s.id] ? " ✓" : "") + "</summary><div class='prose'>" + s.html + "</div>" +
+          '<div class="pl-links">' + lessonLinks(s.lessons) + '</div><label class="donebox"><input type="checkbox" data-act="stepdone" data-id="' + s.id + '"' + (done[s.id] ? " checked" : "") + "> Крок виконано</label></details>";
+      }).join("");
+  }
+
+  // ---------- події ----------
+  function onClick(e) {
+    var b = e.target.closest("[data-tab],[data-act],[data-tool],[data-layer],[data-wall]");
+    if (!b || !host.contains(b) || b.tagName === "INPUT" || b.tagName === "SELECT") return;
+    if (b.tagName === "LABEL") return;
+    if (b.dataset.tab === "walls" && sel && sel.t === "point") { var st0 = P.byId(proj.points, sel.id); if (st0 && st0.wall) { ui.wallRoom = st0.room; ui.wall = st0.wall; } }
+    if (b.dataset.tab) { ui.tab = b.dataset.tab; ui.tool = "select"; view = null; save(); draw(); return; }
+    if (b.dataset.tool) { ui.tool = b.dataset.tool; calib = null; draw(); return; }
+    if (b.dataset.layer) { ui.layer = b.dataset.layer; ui.tool = "select"; save(); draw(); return; }
+    if (b.dataset.wall) { ui.wall = b.dataset.wall; save(); draw(); return; }
+    var a = b.dataset.act, id = b.dataset.id;
+    if (a === "tpl") { setProj(P.template(b.dataset.v)); ui.tab = "flat"; draw(); return; }
+    if (a === "desc") {
+      var txt = host.querySelector(".pl-desc").value, p = P.parseDescription(txt);
+      if (!p) { alert("Не вдалося розпізнати кімнати. Пиши кожну з нового рядка: «Кухня 3×2,8»."); return; }
+      setProj(p); draw(); return;
+    }
+    if (a === "auto") {
+      if (proj.points.length && !confirm("Замінити всі точки і групи типовою розстановкою?")) return;
+      P.autoPlace(proj); sel = null; ui.tab = "plan"; changed(); return;
+    }
+    if (a === "new") { if (!confirm("Почати новий проєкт? Поточний буде втрачено (збережи файл, якщо треба).")) return; proj = null; sel = null; lsSet(KEY, ""); draw(); return; }
+    if (a === "export") { download(); return; }
+    if (a === "photodel") { photo = null; lsSet(PKEY, ""); draw(); return; }
+    if (a === "zin" || a === "zout") { zoom(a === "zin" ? 0.75 : 1.33); return; }
+    if (a === "zfit") { view = null; draw(); return; }
+    if (a === "selroom") { sel = { t: "room", id: id }; draw(); return; }
+    if (a === "unsel") { sel = null; draw(); return; }
+    if (a === "addroom") {
+      var bx = bounds(), r = P.addRoom(proj, "Кімната " + (proj.rooms.length + 1), "room", snap(bx.x + bx.w - 60 + 10), snap(bx.y + 60), 300, 300);
+      sel = { t: "room", id: r.id }; view = null; changed(); return;
+    }
+    if (a === "delroom") {
+      if (!confirm("Видалити кімнату разом з її точками, дверима і вікнами?")) return;
+      proj.rooms = proj.rooms.filter(function (r) { return r.id !== id; }); proj.openings = proj.openings.filter(function (o) { return o.room !== id; });
+      proj.points = proj.points.filter(function (t) { return t.room !== id; }); if (proj.panel && proj.panel.room === id) proj.panel = proj.rooms[0] ? { room: proj.rooms[0].id, wall: "W", pos: 40, h: 150 } : null;
+      sel = null; changed(); return;
+    }
+    if (a === "addopen") { var rr = P.byId(proj.rooms, sel.id); P.addOpening(proj, rr, "N", b.dataset.v, 20, b.dataset.v === "door" ? 80 : 120); changed(); return; }
+    if (a === "delopen") { proj.openings = proj.openings.filter(function (o) { return o.id !== id; }); changed(); return; }
+    if (a === "delpt") { delPoint(id); return; }
+    if (a === "goto") { var t = P.byId(proj.points, id); sel = { t: "point", id: id }; ui.tab = P.KINDS[t.kind].surf === "wall" && ui.tab === "walls" ? "walls" : "plan"; ui.layer = P.KINDS[t.kind].surf === "wall" ? "walls" : "ceiling"; if (ui.tab === "walls") { ui.wallRoom = t.room; ui.wall = t.wall; } draw(); return; }
+    if (a === "newgroup") {
+      var tp = P.byId(proj.points, id), K = P.KINDS[tp.kind], rm = P.byId(proj.rooms, tp.room);
+      var g = P.addGroup(proj, { name: (tp.label || K.name) + " — " + rm.name, kind: K.cat === "light" || K.cat === "switch" || K.cat === "box" ? "light" : K.cat === "power" ? "power" : "socket", In: K.cat === "light" ? 10 : 16, sec: K.cat === "light" ? 1.5 : 2.5, prot: rm.type === "bath" ? "rcbo" : "rcd", rcd: proj.rcds[0] ? proj.rcds[0].id : null, dI: rm.type === "bath" ? 10 : 30 });
+      if (g.prot === "rcd" && !g.rcd) { g.prot = "rcbo"; }
+      tp.group = g.id; changed(); return;
+    }
+    if (a === "addgroup") { P.addGroup(proj, { name: "Нова група", kind: "socket", In: 16, sec: 2.5, prot: proj.rcds[0] ? "rcd" : "rcbo", rcd: proj.rcds[0] ? proj.rcds[0].id : null }); changed(); return; }
+    if (a === "delgroup") { if (!confirm("Видалити групу? Її точки залишаться без групи.")) return; proj.groups = proj.groups.filter(function (g) { return g.id !== id; }); proj.points.forEach(function (t) { if (t.group === id) t.group = null; }); changed(); return; }
+    if (a === "suggest") { var gx = P.byId(proj.groups, id), lx = loadOf(id), sg2 = P.suggest(lx.P); gx.In = sg2.In; gx.sec = sg2.sec; gx.curve = "C"; changed(); return; }
+    if (a === "addrcd") { P.addRcd(proj, 40, 30); changed(); return; }
+    if (a === "delrcd") { proj.rcds = proj.rcds.filter(function (q) { return q.id !== id; }); proj.groups.forEach(function (g) { if (g.rcd === id) { g.rcd = null; } }); changed(); return; }
+    if (a === "print") { window.print(); return; }
+    if (a === "tour") { ui.tour = ui.tour >= 0 ? -1 : 0; if (ui.tour === 0) ui.tab = P.TOUR[0].tab; save(); draw(); return; }
+    if (a === "tnext" || a === "tprev") { ui.tour = Math.max(0, Math.min(P.TOUR.length - 1, ui.tour + (a === "tnext" ? 1 : -1))); ui.tab = P.TOUR[ui.tour].tab; view = null; save(); draw(); return; }
+  }
+  function delPoint(id) {
+    proj.points = proj.points.filter(function (t) { return t.id !== id; });
+    proj.points.forEach(function (t) { if (t.ctl) t.ctl = t.ctl.filter(function (c) { return c.sw !== id; }); });
+    if (sel && sel.id === id) sel = null; changed();
+  }
+  function onChange(e) {
+    var el = e.target, a = el.dataset.act;
+    if (a === "import") { var f = el.files[0]; if (!f) return; var rd = new FileReader(); rd.onload = function () { try { var p = JSON.parse(rd.result); if (!p.rooms) throw 0; setProj(p); ui.tab = "plan"; draw(); } catch (er) { alert("Це не файл проєкту планувальника."); } }; rd.readAsText(f); return; }
+    if (a === "photo") { loadPhoto(el.files[0]); return; }
+    if (a === "photoop") { photo.op = el.value / 100; lsSet(PKEY, JSON.stringify(photo)); draw(); return; }
+    if (a === "routes") { ui.showRoutes = el.checked; save(); draw(); return; }
+    if (a === "gfilter") { ui.gfilter = el.value; draw(); return; }
+    if (a === "wroom") { ui.wallRoom = el.value; ui.wall = busiestWall(P.byId(proj.rooms, el.value)); sel = null; save(); draw(); return; }
+    if (a === "stepdone") { proj.done = proj.done || {}; proj.done[el.dataset.id] = el.checked; save(); draw(); return; }
+    if (a === "ctl") {
+      var t = P.byId(proj.points, el.dataset.id); t.ctl = t.ctl || [];
+      if (el.checked) t.ctl.push({ sw: el.dataset.sw, key: 1 }); else t.ctl = t.ctl.filter(function (c) { return c.sw !== el.dataset.sw; });
+      changed(); return;
+    }
+    var o = el.dataset.o, k = el.dataset.k, id = el.dataset.id; if (!o) return;
+    var v = el.type === "checkbox" ? el.checked : el.dataset.str ? el.value : el.tagName === "SELECT" ? el.value : num(el.value);
+    if (el.tagName === "SELECT" && /^-?\d+(\.\d+)?$/.test(v)) v = +v;
+    if (typeof v === "number" && !isFinite(v)) { draw(); return; }
+    if (o === "proj") proj[k] = v;
+    else if (o === "room") {
+      var r = P.byId(proj.rooms, id);
+      if ((k === "w" || k === "h") && v < 60) v = 60;
+      if (k === "x" || k === "y") { var dx = k === "x" ? v - r.x : 0, dy = k === "y" ? v - r.y : 0; proj.points.forEach(function (t) { if (t.room === r.id && t.x != null) { t.x += dx; t.y += dy; } }); }
+      r[k] = v;
+      if (k === "w" || k === "h") clampRoom(r);
+    } else if (o === "open") { var op = P.byId(proj.openings, id); op[k] = v; }
+    else if (o === "point") {
+      var t2 = P.byId(proj.points, id), rr = P.byId(proj.rooms, t2.room);
+      if (k === "rx") t2.x = rr.x + Math.max(0, Math.min(rr.w, v)); else if (k === "ry") t2.y = rr.y + Math.max(0, Math.min(rr.h, v));
+      else if (k === "group") t2.group = v || null;
+      else t2[k] = v;
+      if (k === "pos") t2.pos = Math.max(0, Math.min(P.wallLen(rr, t2.wall), t2.pos));
+      if (k === "wall") t2.pos = Math.min(t2.pos, P.wallLen(rr, v));
+    } else if (o === "group") { var g = P.byId(proj.groups, id); g[k] = v; if (k === "prot" && v === "rcd" && !g.rcd && proj.rcds[0]) g.rcd = proj.rcds[0].id; if (k === "rcd") g.rcd = v || null; }
+    else if (o === "rcd") { P.byId(proj.rcds, id)[k] = v; }
+    else if (o === "seg") { if (v) proj.over[id] = v; else delete proj.over[id]; }
+    else if (o === "ctlkey") { var ids = id.split("|"), lt = P.byId(proj.points, ids[0]); lt.ctl.forEach(function (c) { if (c.sw === ids[1]) c.key = +v; }); }
+    else if (o === "device") {
+      var td = P.byId(proj.points, id), dv = P.device(v);
+      td.device = v || null;
+      if (dv && dv.id) { td.power = dv.P; td.label = dv.name.replace(/ \(.*/, ""); }
+    }
+    else if (o === "panelf") { proj.panel[k] = v; if (k === "room") proj.panel.pos = 30; }
+    changed();
+  }
+  function clampRoom(r) {
+    proj.points.forEach(function (t) { if (t.room !== r.id) return; if (t.x != null) { t.x = Math.max(r.x, Math.min(r.x + r.w, t.x)); t.y = Math.max(r.y, Math.min(r.y + r.h, t.y)); } else t.pos = Math.min(t.pos, P.wallLen(r, t.wall)); });
+  }
+  function download() {
+    var blob = new Blob([JSON.stringify(proj, null, 1)], { type: "application/json" }), a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = (proj.name || "kvartyra").replace(/[^\wА-Яа-яІіЇїЄєҐґ-]+/g, "_") + ".json";
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  function loadPhoto(f) {
+    if (!f) return;
+    var img = new Image(), url = URL.createObjectURL(f);
+    img.onload = function () {
+      var k = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      var b = bounds(), data = cv.toDataURL("image/jpeg", 0.78);
+      photo = { data: data, w: cv.width, h: cv.height, scale: Math.max(b.w, 800) / cv.width, op: 0.5 };
+      if (!lsSet(PKEY, JSON.stringify(photo))) alert("Фото завелике, щоб зберегти його в браузері — воно працюватиме до перезавантаження сторінки.");
+      URL.revokeObjectURL(url); ui.tool = "calib"; view = null; draw();
+    };
+    img.src = url;
+  }
+  function zoom(k, cx, cy) {
+    if (!view) view = bounds();
+    cx = cx == null ? view.x + view.w / 2 : cx; cy = cy == null ? view.y + view.h / 2 : cy;
+    view = { x: cx - (cx - view.x) * k, y: cy - (cy - view.y) * k, w: view.w * k, h: view.h * k };
+    var svg = host.querySelector(".pl-plan"); if (svg) svg.setAttribute("viewBox", view.x + " " + view.y + " " + view.w + " " + view.h); else draw();
+  }
+
+  // ---------- вказівник на SVG ----------
+  function afterDraw() {
+    var svg = host.querySelector(".pl-plan, .pl-elev"); if (!svg) return;
+    var elev = svg.classList.contains("pl-elev"), drag = null;
+    function pt(e) { var m = svg.getScreenCTM(); if (!m) return [0, 0]; var q = svg.createSVGPoint(); q.x = e.clientX; q.y = e.clientY; q = q.matrixTransform(m.inverse()); return [q.x, q.y]; }
+    svg.addEventListener("wheel", function (e) { if (elev) return; e.preventDefault(); var q = pt(e); zoom(e.deltaY > 0 ? 1.15 : 0.87, q[0], q[1]); }, { passive: false });
+    svg.addEventListener("pointerdown", function (e) {
+      if (e.button > 0) return;
+      var q = pt(e), tg = e.target, ptg = tg.closest("[data-pt]"), rg = tg.closest("[data-room]"), hg = tg.closest("[data-handle]"), pg = tg.closest("[data-panel]"), sg = tg.closest("[data-seg]");
+      var tool = ui.tool;
+      try { svg.setPointerCapture(e.pointerId); } catch (er) {}
+      e.preventDefault();
+      if (elev) { elevDown(q, ptg, pg, sg); return; }
+      if (tool === "calib") { calib = (calib || []).concat([q]); if (calib.length === 2) { var d = Math.hypot(calib[1][0] - calib[0][0], calib[1][1] - calib[0][1]); var real = num(prompt("Реальна відстань між точками, см:", "400")); if (real > 0 && d > 0) { photo.scale *= real / d; lsSet(PKEY, JSON.stringify(photo)); } calib = null; ui.tool = "select"; view = null; } draw(); return; }
+      if (tool === "room") { drawRect = [snap(q[0]), snap(q[1]), snap(q[0]), snap(q[1])]; drag = { kind: "rect" }; return; }
+      if (tool === "del") { if (ptg) delPoint(ptg.dataset.pt); return; }
+      if (tool.indexOf("add:") === 0) { addAt(tool.slice(4), q); return; }
+      if (tool === "ac") { var ar = P.roomAt(proj, q[0], q[1]); if (ar) { var at = P.addAC(proj, ar); sel = { t: "point", id: at.id }; ui.tool = "select"; changed(); } return; }
+      if (tool === "panel") { var rm = P.roomAt(proj, q[0], q[1]); if (rm) { var nw = P.nearestWall(rm, q[0], q[1]); proj.panel = { room: rm.id, wall: nw.wall, pos: snap(nw.pos), h: proj.panel ? proj.panel.h : 150 }; ui.tool = "select"; sel = { t: "panel" }; changed(); } return; }
+      if (ui.tab === "flat") {
+        if (hg) { drag = { kind: "resize", r: P.byId(proj.rooms, hg.dataset.handle), q0: q }; return; }
+        if (rg) { var r = P.byId(proj.rooms, rg.dataset.room); drag = { kind: "room", r: r, q0: q, x0: r.x, y0: r.y, moved: false }; return; }
+      } else {
+        if (ptg) { drag = { kind: "pt", t: P.byId(proj.points, ptg.dataset.pt), moved: false }; return; }
+        if (pg) { drag = { kind: "panel", moved: false }; return; }
+        if (sg) { sel = { t: "seg", id: sg.dataset.seg }; draw(); return; }
+      }
+      drag = { kind: "pan", c0: [e.clientX, e.clientY], v0: view || bounds(), moved: false };
+    });
+    function elevDown(q, ptg, pg, sg) {
+      var r = P.byId(proj.rooms, svg.dataset.room), w = svg.dataset.wall, H = proj.ceilH;
+      var pos = snap(Math.max(0, Math.min(P.wallLen(r, w), q[0]))), z = snap(Math.max(5, Math.min(H - 5, H - q[1])));
+      if (ui.tool === "del") { if (ptg) delPoint(ptg.dataset.pt); return; }
+      if (ui.tool.indexOf("add:") === 0) {
+        var kind = ui.tool.slice(4), t = P.addPoint(proj, kind, r, { wall: w, pos: pos, h: z }); t.group = defaultGroup(t); sel = { t: "point", id: t.id }; ui.tool = "select"; changed(); return;
+      }
+      if (ptg) { drag = { kind: "ept", t: P.byId(proj.points, ptg.dataset.pt), moved: false }; return; }
+      if (sg) { sel = { t: "seg", id: sg.dataset.seg }; draw(); return; }
+      sel = null; draw();
+    }
+    svg.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      var q = pt(e);
+      if (drag.kind === "pan") {
+        var m = svg.getScreenCTM(); if (!m) return;
+        var dx = (e.clientX - drag.c0[0]) / m.a, dy = (e.clientY - drag.c0[1]) / m.d;
+        if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
+        view = { x: drag.v0.x - dx, y: drag.v0.y - dy, w: drag.v0.w, h: drag.v0.h };
+        svg.setAttribute("viewBox", view.x + " " + view.y + " " + view.w + " " + view.h); return;
+      }
+      if (drag.kind === "rect") { drawRect[2] = snap(q[0]); drawRect[3] = snap(q[1]); redrawSvg(); return; }
+      if (drag.kind === "room") {
+        var nx = snap(drag.x0 + q[0] - drag.q0[0]), ny = snap(drag.y0 + q[1] - drag.q0[1]), r = drag.r;
+        if (nx !== r.x || ny !== r.y) { var ddx = nx - r.x, ddy = ny - r.y; proj.points.forEach(function (t) { if (t.room === r.id && t.x != null) { t.x += ddx; t.y += ddy; } }); r.x = nx; r.y = ny; drag.moved = true; cache = null; redrawSvg(); }
+        return;
+      }
+      if (drag.kind === "resize") { var rr = drag.r, w = Math.max(60, snap(q[0] - rr.x)), h = Math.max(60, snap(q[1] - rr.y)); if (w !== rr.w || h !== rr.h) { rr.w = w; rr.h = h; clampRoom(rr); cache = null; redrawSvg(); } return; }
+      if (drag.kind === "pt") {
+        var t = drag.t, rm = P.byId(proj.rooms, t.room);
+        if (P.KINDS[t.kind].surf === "ceiling") { var cx = snap(Math.max(rm.x, Math.min(rm.x + rm.w, q[0]))), cy = snap(Math.max(rm.y, Math.min(rm.y + rm.h, q[1]))); if (cx !== t.x || cy !== t.y) { t.x = cx; t.y = cy; drag.moved = true; cache = null; redrawSvg(); } }
+        else { var nw = P.nearestWall(rm, q[0], q[1]), np = snap(nw.pos); if (np !== t.pos || nw.wall !== t.wall) { t.wall = nw.wall; t.pos = np; drag.moved = true; cache = null; redrawSvg(); } }
+        return;
+      }
+      if (drag.kind === "panel") { var pr = P.byId(proj.rooms, proj.panel.room), pw = P.nearestWall(pr, q[0], q[1]); proj.panel.wall = pw.wall; proj.panel.pos = snap(pw.pos); drag.moved = true; cache = null; redrawSvg(); return; }
+      if (drag.kind === "ept") {
+        var r2 = P.byId(proj.rooms, svg.dataset.room), H = proj.ceilH, p2 = snap(Math.max(0, Math.min(P.wallLen(r2, drag.t.wall), q[0]))), z2 = snap(Math.max(5, Math.min(H - 5, H - q[1])));
+        if (p2 !== drag.t.pos || z2 !== drag.t.h) { drag.t.pos = p2; drag.t.h = z2; drag.moved = true; cache = null; redrawSvg(); }
+      }
+    });
+    svg.addEventListener("pointerup", function () {
+      if (!drag) return;
+      var d = drag; drag = null;
+      if (d.kind === "rect") {
+        var x = Math.min(drawRect[0], drawRect[2]), y = Math.min(drawRect[1], drawRect[3]), w = Math.abs(drawRect[2] - drawRect[0]), h = Math.abs(drawRect[3] - drawRect[1]);
+        drawRect = null;
+        if (w >= 60 && h >= 60) { var r = P.addRoom(proj, "Кімната " + (proj.rooms.length + 1), "room", x, y, w, h); sel = { t: "room", id: r.id }; ui.tool = "select"; }
+        changed(); return;
+      }
+      if (d.kind === "pan") { if (!d.moved) { sel = null; draw(); } return; }
+      if (d.kind === "room" || d.kind === "resize") { sel = { t: "room", id: d.r.id }; changed(); return; }
+      if (d.kind === "pt" || d.kind === "ept") { sel = { t: "point", id: d.t.id }; changed(); return; }
+      if (d.kind === "panel") { sel = { t: "panel" }; changed(); }
+    });
+    function redrawSvg() {
+      var tmp = document.createElement("div");
+      tmp.innerHTML = elev ? elevSvg(P.byId(proj.rooms, svg.dataset.room), svg.dataset.wall) : planSvg(ui.tab === "flat" ? "flat" : "plan");
+      svg.innerHTML = tmp.firstChild.innerHTML;
+    }
+  }
+  function addAt(kind, q) {
+    var r = P.roomAt(proj, q[0], q[1]), K = P.KINDS[kind];
+    if (!r) { var best = null, bd = 80; proj.rooms.forEach(function (rm) { var nw = P.nearestWall(rm, q[0], q[1]); if (nw.d < bd) { bd = nw.d; best = rm; } }); r = best; }
+    if (!r) return;
+    var t;
+    if (K.surf === "ceiling") t = P.addPoint(proj, kind, r, { x: snap(Math.max(r.x, Math.min(r.x + r.w, q[0]))), y: snap(Math.max(r.y, Math.min(r.y + r.h, q[1]))) });
+    else { var nw = P.nearestWall(r, q[0], q[1]); t = P.addPoint(proj, kind, r, { wall: nw.wall, pos: snap(nw.pos) }); }
+    t.group = defaultGroup(t);
+    if (K.cat === "light") { var sw = proj.points.filter(function (x) { return x.room === r.id && (x.kind === "sw1" || x.kind === "sw2"); })[0]; if (sw) t.ctl = [{ sw: sw.id, key: 1 }]; }
+    sel = { t: "point", id: t.id }; ui.tool = "select"; changed();
+  }
+
+  window.PLANNER = { render: render, bind: bind };
+})();
