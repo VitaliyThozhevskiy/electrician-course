@@ -12,6 +12,7 @@
     if (t === "feed") return [{ f: "L", c: "br" }, { f: "N", c: "bl" }, { f: "PE", c: "yg" }];
     if (t === "light") {
       var lines = lightLines(p, b);
+      if (b && b.kind === "fan" && b.timer && lines.length <= 1) return [{ f: "L'", c: "br", line: lines[0] }, { f: "Lпост", c: "bk", perm: true }, { f: "N", c: "bl" }, { f: "PE", c: "yg" }, { f: "резерв", c: "gr", use: false }];
       if (lines.length <= 1) return [{ f: "L'", c: "br", line: lines[0] }, { f: "N", c: "bl" }, { f: "PE", c: "yg" }];
       return [{ f: "L1'", c: "br", line: lines[0] }, { f: "L2'", c: "bk", line: lines[1] }, { f: "N", c: "bl" }, { f: "PE", c: "yg" }, { f: "резерв", c: "gr", use: false }];
     }
@@ -68,7 +69,9 @@
         var sA = sws.filter(function (s) { return s.b === pass[0]; })[0];
         if (sA) Lw.push(wire(p, sA, b.id, core(p, sA, "COM")));
       });
-      J("L — фаза", Lw, "фаза від щита йде далі тільки на вимикачі — не на світильники");
+      var permW = [];
+      lights.forEach(function (ls) { cores(p, ls).forEach(function (c) { if (c.perm) permW.push(wire(p, ls, b.id, c)); }); });
+      J("L — фаза", Lw.concat(permW), permW.length ? "фаза від щита йде на вимикачі і на клему L таймера вентилятора (постійна фаза) — більше нікуди" : "фаза від щита йде далі тільки на вимикачі — не на світильники");
       // звичайні вимикачі: L' клавіші → світильники
       sws.forEach(function (s) {
         var sp = P.byId(p.points, s.b);
@@ -123,7 +126,7 @@
         cs.forEach(function (c) { lines.push({ color: c.c, text: c.use === false ? C[c.c] + " — не використовується, заізолюй" : C[c.c] + " (" + c.f + ") → " + term[c.f] + (c.mark ? "; " + c.mark : "") }); });
       } else if (K.cat === "light") {
         var inc = x.inc[0], cl = cores(p, inc);
-        cl.forEach(function (c) { if (c.use === false) return; lines.push({ color: c.c, text: C[c.c] + " (" + c.f + ") → " + (c.f === "N" ? "клема N" : c.f === "PE" ? "клема заземлення ⏚ / корпус" : c.f === "L1'" ? "лінія L1 (перша група ламп)" : c.f === "L2'" ? "лінія L2 (друга група ламп)" : "клема L") }); });
+        cl.forEach(function (c) { if (c.use === false) return; lines.push({ color: c.c, text: C[c.c] + " (" + c.f + ") → " + (c.f === "N" ? "клема N" : c.f === "PE" ? "клема заземлення ⏚ / корпус (у вентилятора класу II її немає — заізолюй жилу)" : c.f === "Lпост" ? "клема L (постійна фаза — живить таймер)" : c.f === "L'" && t.kind === "fan" && t.timer ? "клема S / LT (сигнал від вимикача: вентилятор стартує, а після вимкнення доганяє таймер)" : c.f === "L1'" ? "лінія L1 (перша група ламп)" : c.f === "L2'" ? "лінія L2 (друга група ламп)" : "клема L") }); });
         if (x.out.length) lines.push({ text: "Далі ланцюг до «" + who(p, x.out[0], t.id) + "»: кожну жилу вхідного і вихідного кабелю з'єднай WAGO на 3 (вхід + вихід + відвід на світильник)." });
         if (t.kind === "led") lines.push({ text: "230 В — на вхід блока живлення; стрічка — на вихід 12/24 В з дотриманням + і −. Блок — у доступному місці." });
       } else {

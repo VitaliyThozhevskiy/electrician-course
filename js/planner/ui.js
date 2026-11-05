@@ -5,9 +5,9 @@
   var KEY = "ec-planner", PKEY = "ec-planner-photo", SKEY = "ec-planner-ui";
   var COLORS = ["#c2560f", "#1f6fd1", "#1f7a46", "#8e44ad", "#b3261e", "#0f8b8d", "#a0522d", "#6b7f00", "#d6336c", "#5c6b7a", "#e67700", "#2b8a3e"];
   var TABS = [["flat", "Квартира"], ["plan", "План і стеля"], ["walls", "Стіни"], ["groups", "Групи і щит"], ["wiring", "З'єднання"], ["spec", "Матеріали"], ["steps", "План робіт"]];
-  var WALL_KINDS = ["socket", "outlet", "sw1", "sw2", "pass", "cross", "sconce", "led", "jbox"];
+  var WALL_KINDS = ["socket", "outlet", "sw1", "sw2", "pass", "cross", "sconce", "led", "fan", "jbox"];
   var CEIL_KINDS = ["ceil", "spot"];
-  var SHORT = { socket: "Розетка", outlet: "Вивід під техніку", sw1: "Вимикач", sw2: "Вимикач 2-кл.", pass: "Прохідний", cross: "Перехресний", sconce: "Бра", led: "LED-підсвітка", jbox: "Коробка", ceil: "Світильник", spot: "Точковий" };
+  var SHORT = { socket: "Розетка", outlet: "Вивід під техніку", sw1: "Вимикач", sw2: "Вимикач 2-кл.", pass: "Прохідний", cross: "Перехресний", sconce: "Бра", led: "LED-підсвітка", fan: "Вентилятор", jbox: "Коробка", ceil: "Світильник", spot: "Точковий" };
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function num(v) { return parseFloat(String(v).replace(",", ".")); }
@@ -192,6 +192,7 @@
     } else if (kind === "ceil" || kind === "sconce") {
       h = '<circle cx="' + x + '" cy="' + y + '" r="' + s * (kind === "ceil" ? 1.15 : .85) + '" class="pi pi-light"/><line x1="' + (x - s * .75) + '" y1="' + (y - s * .75) + '" x2="' + (x + s * .75) + '" y2="' + (y + s * .75) + '" class="pi-line"/><line x1="' + (x - s * .75) + '" y1="' + (y + s * .75) + '" x2="' + (x + s * .75) + '" y2="' + (y - s * .75) + '" class="pi-line"/>';
     } else if (kind === "spot") h = '<circle cx="' + x + '" cy="' + y + '" r="' + s * .6 + '" class="pi pi-light"/><circle cx="' + x + '" cy="' + y + '" r="' + s * .2 + '" class="pi-dot"/>';
+    else if (kind === "fan") h = '<circle cx="' + x + '" cy="' + y + '" r="' + s * .9 + '" class="pi pi-light"/><path d="M' + x + " " + y + " L" + x + " " + (y - s * .8) + " M" + x + " " + y + " L" + (x + s * .7) + " " + (y + s * .4) + " M" + x + " " + y + " L" + (x - s * .7) + " " + (y + s * .4) + '" class="pi-line"/>';
     else if (kind === "led") h = '<rect x="' + (x - s * 1.2) + '" y="' + (y - s * .45) + '" width="' + 2.4 * s + '" height="' + .9 * s + '" class="pi pi-light"/>';
     else if (kind === "jbox") h = '<rect x="' + (x - s * .8) + '" y="' + (y - s * .8) + '" width="' + 1.6 * s + '" height="' + 1.6 * s + '" class="pi pi-box"/><circle cx="' + x + '" cy="' + y + '" r="' + s * .25 + '" class="pi-dot"/>';
     return h;
@@ -336,7 +337,8 @@
       if (!pw) h += '<p class="pl-live-why">Світло не загориться: ' + esc(gWhyOff(g)) + ".</p>";
     } else if (K.cat === "light") {
       var lit = isLit(t);
-      h += "<p>" + (lit ? "💡 Світиться, " + P.nf(t.power || 0, 0) + " Вт." : "Не світиться: " + esc(pw ? (t.ctl || []).length ? "вимикач розімкнув фазу" : "не прив'язаний до вимикача" : gWhyOff(g)) + ".") + "</p>";
+      if (t.kind === "fan") h += "<p>" + (lit ? "🌀 Крутиться, " + P.nf(t.power || 0, 0) + " Вт." : pw ? (t.timer ? "Вимкнено вимикачем. Таймер ще 2–15 хв крутить вентилятор — на клемі L постійна фаза, тому він може доганяти." : "Не крутиться: вимикач розімкнув фазу.") : "Не крутиться: " + esc(gWhyOff(g)) + (t.timer ? ". Таймер теж без живлення." : ".")) + "</p>";
+      else h += "<p>" + (lit ? "💡 Світиться, " + P.nf(t.power || 0, 0) + " Вт." : "Не світиться: " + esc(pw ? (t.ctl || []).length ? "вимикач розімкнув фазу" : "не прив'язаний до вимикача" : gWhyOff(g)) + ".") + "</p>";
       if ((t.ctl || []).length) h += "<p class='meta'>Вимикачі: " + t.ctl.map(function (c) { return esc(P.labelRef(proj, c.sw)) + (P.byId(proj.points, c.sw) && P.KINDS[P.byId(proj.points, c.sw).kind].keys > 1 ? ", клавіша " + c.key : ""); }).join("; ") + ".</p>";
     } else if (K.cat === "socket" || K.cat === "power") {
       h += '<table class="pl-meter"><tr><th>Тестер</th><th>Показ</th></tr><tr><td>L–N</td><td>' + (pw ? "≈ 230 В" : "0 В") + "</td></tr><tr><td>L–PE</td><td>" + (pw ? "≈ 230 В" : "0 В") + "</td></tr><tr><td>N–PE</td><td>0 В</td></tr></table>" +
@@ -386,6 +388,7 @@
     var K = P.KINDS[t.kind], r = P.byId(proj.rooms, t.room), h = '<div class="card pl-card"><h3>' + esc(P.labelRef(proj, t.id)) + "</h3>";
     if (K.surf === "wall") h += selF("point", t.id, "wall", t.wall, wallOpts(r), "Стіна") + '<div class="pl-grid2">' + inp("point", t.id, "pos", t.pos, { label: "Від лівого кута", unit: "см" }) + inp("point", t.id, "h", t.h, { label: "Висота від підлоги", unit: "см" }) + "</div>";
     else h += '<div class="pl-grid2">' + inp("point", t.id, "rx", t.x - r.x, { label: "Від лівої стіни", unit: "см" }) + inp("point", t.id, "ry", t.y - r.y, { label: "Від верхньої стіни", unit: "см" }) + "</div>";
+    if (t.kind === "fan") h += selF("point", t.id, "timer", t.timer ? 1 : 0, [[1, "з таймером — постійна фаза + від вимикача"], [0, "без таймера — лише від вимикача"]], "Живлення");
     if (t.kind === "socket") h += selF("point", t.id, "gang", t.gang, [[1, "1 пост"], [2, "2 пости (блок)"], [3, "3 пости"], [4, "4 пости"]], "Кількість постів");
     if (t.kind === "socket" || t.kind === "outlet") h += selF("device", t.id, "device", t.device || "", P.DEVICES.map(function (d) { return [d.id, d.name + (d.P ? " — " + P.nf(d.P / 1000, 1) + " кВт" : "")]; }), "Що сюди ввімкнуть");
     if (t.kind === "socket" || t.kind === "outlet" || K.cat === "light") h += inp("point", t.id, "power", t.power || 0, { label: K.cat === "light" ? "Потужність" : "Прилад (потужність, якщо відомо)", unit: "Вт" });

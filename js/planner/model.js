@@ -25,6 +25,7 @@
     spot:   { name: "Точковий світильник", surf: "ceiling", cat: "light", power: 7 },
     sconce: { name: "Бра", surf: "wall", h: 160, cat: "light", power: 40 },
     led:    { name: "LED-підсвітка (блок живлення)", surf: "wall", h: 140, cat: "light", power: 30 },
+    fan:    { name: "Витяжний вентилятор", surf: "wall", h: 220, cat: "light", power: 15 },
     jbox:   { name: "Розподільча коробка", surf: "wall", h: -20, cat: "box" }
   };
   var PLANES = { wallTop: "Стіна, під стелею", wallBottom: "Стіна, над підлогою (~30 см)", ceiling: "По стелі (у гофрі)", floor: "По підлозі (у гофрі, під стяжку)" };
@@ -127,6 +128,7 @@
     } else { pt.x = opt.x != null ? opt.x : room.x + room.w / 2; pt.y = opt.y != null ? opt.y : room.y + room.h / 2; }
     if (kind === "socket") pt.gang = opt.gang || 1;
     if (K.cat === "light") { pt.power = opt.power || K.power; pt.ctl = opt.ctl || []; }
+    if (kind === "fan") pt.timer = opt.timer != null ? (opt.timer ? 1 : 0) : 1;
     if (kind === "socket" || kind === "outlet") pt.power = opt.power || 0;
     if (opt.label) pt.label = opt.label;
     p.points.push(pt); return pt;
@@ -554,7 +556,8 @@
       Object.keys(sets).forEach(function (sig) {
         var list = sets[sig], h = sig.split("|")[0], lines = switchedLines(p, list[0]);
         var ch = nnChain(p, h, list.map(function (t) { return t.id; })), pr = h;
-        ch.forEach(function (id) { add(pr, id, g, lines + 2, "light"); pr = id; });
+        var perm = list.some(function (t) { return t.kind === "fan" && t.timer; }) ? 1 : 0;
+        ch.forEach(function (id) { add(pr, id, g, lines + 2 + perm, "light"); pr = id; });
       });
     });
     return segs;
@@ -702,7 +705,7 @@
     var posts = p.points.reduce(function (s, t) { return s + (t.kind === "socket" ? t.gang : 0); }, 0);
     var frames = {}; p.points.forEach(function (t) { if (t.kind === "socket" && t.gang > 1) frames[t.gang] = (frames[t.gang] || 0) + 1; });
     var sw = cnt(function (t) { return KINDS[t.kind].cat === "switch"; });
-    var wallOut = cnt(function (t) { return t.kind === "outlet" || t.kind === "sconce" || t.kind === "led"; });
+    var wallOut = cnt(function (t) { return t.kind === "outlet" || t.kind === "sconce" || t.kind === "led" || t.kind === "fan"; });
     items.push({ name: "Підрозетник глибокий (60 мм) для розеток", qty: posts, unit: "шт", note: "на кожен пост; багатопостові — з'єднувані" });
     items.push({ name: "Підрозетник для вимикачів", qty: sw, unit: "шт" });
     if (wallOut) items.push({ name: "Підрозетник під вивід кабелю / бра / блок живлення", qty: wallOut, unit: "шт" });
