@@ -349,6 +349,8 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-hole { fill: var(--surface); stroke: currentColor; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .pl-pt { cursor: grab; }
 .pl-pt.dim { opacity: .4; }
+.pl-svg text.pl-ac { fill: #2a7fd0; font-weight: 700; pointer-events: none; }
+[data-theme="dark"] .pl-svg text.pl-ac { fill: #6fb3ff; }
 .pl-pt .pi { fill: var(--surface); stroke: var(--g); stroke-width: 2.2; vector-effect: non-scaling-stroke; }
 .pl-pt .pi-light { fill: #ffe9a8; }
 .pl-pt .pi-line { stroke: var(--g); stroke-width: 2; fill: none; vector-effect: non-scaling-stroke; }

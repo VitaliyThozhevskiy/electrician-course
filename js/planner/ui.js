@@ -34,6 +34,7 @@
     try { var s = JSON.parse(lsGet(KEY)); if (s && s.rooms) proj = P.normalize(s); } catch (e) {}
     try { photo = JSON.parse(lsGet(PKEY)); } catch (e) {}
     try { var u = JSON.parse(lsGet(SKEY)); if (u) for (var k in u) ui[k] = u[k]; } catch (e) {}
+    if (!proj && P.template) { proj = P.normalize(P.template("home")); ui.tab = "plan"; }
     ui.tool = "select";
   }
   function save() {
@@ -114,7 +115,7 @@
     var h = "";
     if (!proj) {
       return '<div class="pl-start">' +
-        '<div class="card"><h3>Шаблон</h3><p>Типове планування — розміри потім змінюються.</p><div class="row"><button type="button" class="btn small" data-act="tpl" data-v="studio">Студія</button><button type="button" class="btn small" data-act="tpl" data-v="one">1-кімнатна</button><button type="button" class="btn small" data-act="tpl" data-v="two">2-кімнатна</button></div></div>' +
+        '<div class="card"><h3>Шаблон</h3><p>Типове планування — розміри потім змінюються.</p><div class="row"><button type="button" class="btn small" data-act="tpl" data-v="home">Моя квартира 63,7 м²</button><button type="button" class="btn small" data-act="tpl" data-v="studio">Студія</button><button type="button" class="btn small" data-act="tpl" data-v="one">1-кімнатна</button><button type="button" class="btn small" data-act="tpl" data-v="two">2-кімнатна</button></div></div>' +
         '<div class="card"><h3>З опису</h3><p>Кожна кімната — з нового рядка: назва і розміри (м або см) чи площа. Можна вказати висоту стелі.</p><textarea class="pl-desc" rows="6" placeholder="Коридор 1,4×4,5&#10;Кімната 4,2×3,6&#10;Кухня 3×2,8&#10;Ванна 170×200 см&#10;Стеля 2,7"></textarea><div class="row"><button type="button" class="btn small" data-act="desc">Створити план</button></div></div>' +
         '<div class="card"><h3>Файл проєкту</h3><p>Відкрий раніше збережений проєкт (.json) — свій або підготовлений для тебе.</p><label class="btn ghost small pl-file">Відкрити файл<input type="file" accept=".json,application/json" data-act="import" hidden></label>' +
         '<p class="meta">Після створення можна підкласти фото плану з БТІ чи від забудовника і підігнати кімнати по ньому.</p></div></div>';
@@ -226,10 +227,11 @@
       proj.points.forEach(function (t) {
         var q = ptXY(t); if (!q) return;
         var on = sel && sel.t === "point" && sel.id === t.id, isC = P.KINDS[t.kind].surf === "ceiling";
-        var dim = (ui.layer === "ceiling" && !isC) || (ui.layer === "walls" && isC);
+        var dv = P.device && P.device(t.device), isAC = !!(dv && dv.ac);
+        var dim = !isAC && ((ui.layer === "ceiling" && !isC) || (ui.layer === "walls" && isC));
         var hl = sel && sel.t === "point" && related(sel.id, t);
         h += '<g data-pt="' + t.id + '" class="pl-pt' + (on ? " on" : "") + (hl ? " rel" : "") + (dim ? " dim" : "") + (bad[t.id] ? " " + bad[t.id] : "") + '" style="--g:' + (t.group ? gcolor(t.group) : "var(--muted)") + '">' +
-          (on || hl ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * 1.9 + '" class="pl-ring"/>' : "") + icon(t.kind, q[0], q[1], s) + "</g>";
+          (on || hl ? '<circle cx="' + q[0] + '" cy="' + q[1] + '" r="' + s * 1.9 + '" class="pl-ring"/>' : "") + icon(t.kind, q[0], q[1], s) + (isAC ? "<text x=\"" + (q[0] + s * 1.3) + "\" y=\"" + (q[1] - s * .9) + "\" class=\"pl-ac\" style=\"font-size:" + (s * 3.2).toFixed(1) + "px\">❄</text>" : "") + "</g>";
       });
     }
     if (drawRect) h += '<rect x="' + Math.min(drawRect[0], drawRect[2]) + '" y="' + Math.min(drawRect[1], drawRect[3]) + '" width="' + Math.abs(drawRect[2] - drawRect[0]) + '" height="' + Math.abs(drawRect[3] - drawRect[1]) + '" class="pl-draw"/>';
@@ -267,7 +269,7 @@
       '<span class="pl-seg"><button type="button" data-layer="ceiling" class="' + (ui.layer === "ceiling" ? "on" : "") + '">Стеля</button><button type="button" data-layer="walls" class="' + (ui.layer === "walls" ? "on" : "") + '">Стіни</button></span>' +
       '<button type="button" data-tool="select" class="' + (ui.tool === "select" ? "on" : "") + '">✥ Вибір</button>' +
       kinds.map(function (k) { return '<button type="button" data-tool="add:' + k + '" class="' + (ui.tool === "add:" + k ? "on" : "") + '">+ ' + SHORT[k] + "</button>"; }).join("") +
-      (ui.layer === "walls" ? '<button type="button" data-tool="ac" class="' + (ui.tool === "ac" ? "on" : "") + '">+ Кондиціонер</button>' : "") +
+      (true ? '<button type="button" data-tool="ac" class="' + (ui.tool === "ac" ? "on" : "") + '">+ Кондиціонер</button>' : "") +
       (ui.layer === "walls" ? '<button type="button" data-tool="panel" class="' + (ui.tool === "panel" ? "on" : "") + '">Щит сюди</button>' : "") +
       '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button>' + zoomBtns() + "</div>" +
       '<div class="pl-bar pl-bar2"><label class="pl-barbtn"><input type="checkbox" data-act="routes"' + (ui.showRoutes ? " checked" : "") + "> Траси</label>" +
