@@ -383,7 +383,10 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-schbtn { margin: 4px 0; }
 .pl-sch.big { position: fixed; z-index: 1001; top: 4vh; left: 50%; transform: translateX(-50%); width: min(1000px, 94vw); max-height: 92vh; overflow: auto; background: var(--surface); box-shadow: var(--shadow, 0 10px 40px rgba(0,0,0,.5)); padding: 14px 18px; margin: 0; }
 .pl-sch.big .pl-scheme { max-width: none !important; }
-.pl-sch.big .pl-says { font-size: 15px; }
+.pl-sch.big .pl-rcl { padding-left: 16px; margin: 4px 0 8px; font-size: 13px; }
+.pl-rcl li { margin: 3px 0; }
+.pl-roomcab h4 { margin: 10px 0 2px; }
+.pl-says { font-size: 15px; }
 .pl-sch-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.55); }
 .pl-says { padding-left: 18px; margin: 4px 0 6px; font-size: 13px; }
 .pl-says li { margin: 2px 0; }

@@ -574,14 +574,18 @@
         boxes.forEach(function (b) { var eb = endpoint(p, b), d = dist([e.x, e.y], [eb.x, eb.y]); if (d < bd) { bd = d; best = b; } });
         return best || "panel";
       }
+      var swHub = {};
       pts.filter(function (t) { return KINDS[t.kind].cat === "switch"; }).forEach(function (t) {
         // вимикач ставлять у кімнаті, світло якої він вмикає: коробка — тієї кімнати
         var lit = pts.filter(function (l) { return (l.ctl || []).some(function (c) { return c.sw === t.id; }); })[0];
-        add(lit ? hub(lit) : hub(t), t.id, g, KINDS[t.kind].cores, "switch");
+        swHub[t.id] = lit ? hub(lit) : hub(t);
+        add(swHub[t.id], t.id, g, KINDS[t.kind].cores, "switch");
       });
+      // світильник живиться з тієї коробки, куди прийшов кабель його вимикача — інакше вимкнена фаза до нього не дійде
+      function lightHub(t) { var c = (t.ctl || []).filter(function (x) { return swHub[x.sw]; })[0]; return c ? swHub[c.sw] : hub(t); }
       var sets = {};
       pts.filter(function (t) { return KINDS[t.kind].cat === "light"; }).forEach(function (t) {
-        var sig = hub(t) + "|" + (t.ctl || []).map(function (c) { return c.sw + ":" + c.key; }).sort().join(",");
+        var sig = lightHub(t) + "|" + (t.ctl || []).map(function (c) { return c.sw + ":" + c.key; }).sort().join(",");
         (sets[sig] = sets[sig] || []).push(t);
       });
       Object.keys(sets).forEach(function (sig) {
