@@ -31,20 +31,20 @@
   var PLANES = { wallTop: "Стіна, під стелею", wallBottom: "Стіна, над підлогою (~30 см)", ceilGrid: "По стелі, паралельно стінам (у гофрі)", ceiling: "По стелі навпрост (у гофрі)", floor: "По підлозі (у гофрі, під стяжку)" };
   function onCeil(pl) { return pl === "ceiling" || pl === "ceilGrid"; }
   // траса по стелі з поворотом під 90°: вибираємо кут, з яким менше проходів крізь стіни
-  function gridRoute(p, a, b) {
+  function gridRoute(p, a, b, hug) {
     function walk(pts) {
-      var holes = [], out = 0, prev = null, len = 0;
+      var holes = [], out = 0, prev = null, len = 0, wsum = 0, wn = 0;
       for (var i = 0; i < pts.length - 1; i++) {
         var d = dist(pts[i], pts[i + 1]), n = Math.max(1, Math.ceil(d / 5)); len += d;
         for (var k = 0; k <= n; k++) {
           var x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k / n, y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k / n, r = roomAt(p, x, y);
           if (!r) { out++; continue; }
           if (prev && r.id !== prev.id) holes.push({ from: prev.id, to: r.id, x: x, y: y });
-          prev = r;
+          prev = r; wsum += Math.min(x - r.x, r.x + r.w - x, y - r.y, r.y + r.h - y); wn++;
         }
       }
       // крок 5 см поза кімнатами = товща стіни; довгий відрізок поза квартирою майже заборонений
-      return { pts: pts, holes: holes, score: holes.length * 20 + out * 10 + len * 0.05, len: len, out: out };
+      return { pts: pts, holes: holes, score: holes.length * 20 + out * 10 + len * 0.05 + (hug && wn ? wsum / wn * 0.08 : 0), len: len, out: out };
     }
     if (Math.abs(a[0] - b[0]) < 1 || Math.abs(a[1] - b[1]) < 1) { var st = walk([a, b]); if (st.out < 30) return st; }
     var best = null;
@@ -139,7 +139,31 @@
   // ---------- проєкт ----------
   function blank() {
     return { v: 1, name: "Моя квартира", ceilH: 270, system: "TN-C-S", input: 40, relay: true, seq: 0,
-      rooms: [], openings: [], points: [], groups: [], rcds: [], panel: null, over: {} };
+      rooms: [], openings: [], points: [], groups: [], rcds: [], panel: null, over: {}, furn: [], ceilInset: 4 };
+  }
+  // ---------- меблі (прямокутники на плані, см; ht — висота, z — від підлоги) ----------
+  var FURN = {
+    bed: { n: "Ліжко", w: 160, d: 200, h: 50, c: "#8e7cc3" }, nightstand: { n: "Тумба приліжкова", w: 45, d: 40, h: 50, c: "#a58e6b" },
+    wardrobe: { n: "Шафа", w: 180, d: 60, h: 240, c: "#a58e6b" }, sofa: { n: "Диван", w: 220, d: 95, h: 85, c: "#6d8fb3" },
+    armchair: { n: "Крісло", w: 80, d: 80, h: 85, c: "#6d8fb3" }, table: { n: "Обідній стіл", w: 120, d: 80, h: 75, c: "#b38b5d" },
+    desk: { n: "Робочий стіл", w: 140, d: 70, h: 75, c: "#b38b5d" }, tvstand: { n: "Тумба під ТВ", w: 160, d: 40, h: 50, c: "#a58e6b" },
+    tv: { n: "Телевізор", w: 120, d: 8, h: 70, z: 100, c: "#333a44" }, kitchen: { n: "Кухня, нижні шафи", w: 240, d: 60, h: 90, c: "#c9a46a" },
+    upper: { n: "Кухня, верхні шафи", w: 200, d: 35, h: 70, z: 150, c: "#c9a46a" }, fridge: { n: "Холодильник", w: 60, d: 65, h: 185, c: "#cfd6dd" },
+    washer: { n: "Пральна машина", w: 60, d: 55, h: 85, c: "#cfd6dd" }, boiler: { n: "Газовий котел", w: 40, d: 32, h: 72, z: 140, c: "#e8e8e8" },
+    sink: { n: "Тумба з умивальником", w: 80, d: 46, h: 85, c: "#9fc3d9" }, toilet: { n: "Унітаз", w: 38, d: 65, h: 40, c: "#e8e8e8" },
+    shower: { n: "Душ / ванна", w: 90, d: 90, h: 200, c: "#9fc3d9" }, shelf: { n: "Стелаж / полиці", w: 100, d: 45, h: 220, c: "#a58e6b" }
+  };
+  function addFurn(p, kind, room, x, y, w, d, o) {
+    var K = FURN[kind] || FURN.shelf; o = o || {}; p.furn = p.furn || [];
+    var f = { id: uid(p, "f"), kind: kind, room: room && room.id || room, name: o.name || K.n, x: x, y: y, w: w, d: d, ht: o.ht || K.h, z: o.z != null ? o.z : (K.z || 0) };
+    p.furn.push(f); return f;
+  }
+  // поставити меблі спиною до стіни; pos — центр уздовж стіни (той самий відлік, що й у точок)
+  function furnAt(p, kind, room, wall, pos, o) {
+    o = o || {}; var K = FURN[kind], len = o.w || K.w, dep = o.d || K.d, c = wallXY(room, wall, pos), x, y, w, d;
+    if (wall === "N" || wall === "S") { x = c[0] - len / 2; w = len; d = dep; y = wall === "N" ? room.y : room.y + room.h - dep; }
+    else { y = c[1] - len / 2; d = len; w = dep; x = wall === "W" ? room.x : room.x + room.w - dep; }
+    return addFurn(p, kind, room, x, y, w, d, o);
   }
   function addRoom(p, name, type, x, y, w, h) { var r = { id: uid(p, "r"), name: name, type: type, x: x, y: y, w: w, h: h }; p.rooms.push(r); return r; }
   function addOpening(p, room, wall, kind, pos, width, height, sill) {
@@ -522,10 +546,10 @@
         else { drops += Math.abs(z - e.h); seg.verts.push({ room: e.room.id, wall: e.wall, pos: e.pos, z0: Math.min(z, e.h), z1: Math.max(z, e.h) }); }
       });
     } else if (plane === "ceilGrid") {
-      // від стіни кабель виходить на стелю і йде на 15 см від неї, а не впритул по ребру стіни
-      var INS = 15, NRM = { N: [0, 1], S: [0, -1], E: [-1, 0], W: [1, 0] };
+      // від стіни кабель виходить на стелю; відступ від стіни — налаштування проєкту (типово впритул, у куті стеля–стіна, як роблять забудовники)
+      var INS = p.ceilInset != null ? +p.ceilInset : 4, NRM = { N: [0, 1], S: [0, -1], E: [-1, 0], W: [1, 0] };
       var ins = function (e) { var n = !e.ceiling && e.wall && NRM[e.wall]; return n ? [e.x + n[0] * INS, e.y + n[1] * INS] : [e.x, e.y]; };
-      var ia = ins(ea), ib = ins(eb), gr = gridRoute(p, ia, ib), gp = gr.pts.slice();
+      var ia = ins(ea), ib = ins(eb), gr = gridRoute(p, ia, ib, INS < 10), gp = gr.pts.slice();
       if (ia[0] !== ea.x || ia[1] !== ea.y) gp.unshift([ea.x, ea.y]);
       if (ib[0] !== eb.x || ib[1] !== eb.y) gp.push([eb.x, eb.y]);
       var mp = [gp[0]];
@@ -921,10 +945,11 @@
 
   // ---------- серіалізація ----------
   function normalize(p) {
-    var b = blank();
+    var b = blank(), noFurn = p.furn == null;
     Object.keys(b).forEach(function (k) { if (p[k] == null) p[k] = b[k]; });
     var max = 0;
-    ["rooms", "openings", "points", "groups", "rcds"].forEach(function (k) { p[k].forEach(function (x) { var n = parseInt(String(x.id).replace(/\D/g, ""), 10); if (n > max) max = n; }); });
+    if (noFurn && api.homeFurn) api.homeFurn(p);
+    ["rooms", "openings", "points", "groups", "rcds", "furn"].forEach(function (k) { p[k].forEach(function (x) { var n = parseInt(String(x.id).replace(/\D/g, ""), 10); if (n > max) max = n; }); });
     p.seq = Math.max(p.seq || 0, max);
     return p;
   }
@@ -932,6 +957,7 @@
   var api = {
     WALLS: WALLS, WALL_NAME: WALL_NAME, ROOM_TYPES: ROOM_TYPES, KINDS: KINDS, PLANES: PLANES, GROUP_KINDS: GROUP_KINDS, SECTIONS: SECTIONS, BREAKERS: BREAKERS,
     CABLE_MAX: CABLE_MAX, ZONE_TOP: ZONE_TOP, ZONE_BOT: ZONE_BOT,
+    FURN: FURN, addFurn: addFurn, furnAt: furnAt,
     blank: blank, template: template, parseDescription: parseDescription, autoPlace: autoPlace, normalize: normalize,
     addRoom: addRoom, addOpening: addOpening, addPoint: addPoint, addGroup: addGroup, addRcd: addRcd,
     wallLen: wallLen, wallXY: wallXY, nearestWall: nearestWall, roomAt: roomAt, openingsOn: openingsOn, shared: shared, byId: byId,
