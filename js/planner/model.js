@@ -522,8 +522,21 @@
         else { drops += Math.abs(z - e.h); seg.verts.push({ room: e.room.id, wall: e.wall, pos: e.pos, z0: Math.min(z, e.h), z1: Math.max(z, e.h) }); }
       });
     } else if (plane === "ceilGrid") {
-      var gr = gridRoute(p, [ea.x, ea.y], [eb.x, eb.y]);
-      horiz = gr.len; seg.line = gr.pts; seg.holes = gr.holes.map(function (o) { return { from: o.from, to: o.to, x: o.x, y: o.y, z: C }; });
+      // від стіни кабель виходить на стелю і йде на 15 см від неї, а не впритул по ребру стіни
+      var INS = 15, NRM = { N: [0, 1], S: [0, -1], E: [-1, 0], W: [1, 0] };
+      var ins = function (e) { var n = !e.ceiling && e.wall && NRM[e.wall]; return n ? [e.x + n[0] * INS, e.y + n[1] * INS] : [e.x, e.y]; };
+      var ia = ins(ea), ib = ins(eb), gr = gridRoute(p, ia, ib), gp = gr.pts.slice();
+      if (ia[0] !== ea.x || ia[1] !== ea.y) gp.unshift([ea.x, ea.y]);
+      if (ib[0] !== eb.x || ib[1] !== eb.y) gp.push([eb.x, eb.y]);
+      var mp = [gp[0]];
+      for (var mi = 1; mi < gp.length; mi++) {
+        var q0 = mp[mp.length - 1], q1 = gp[mi], q2 = gp[mi + 1];
+        if (dist(q0, q1) < 0.5) continue;
+        if (q2 && ((Math.abs(q0[0] - q1[0]) < 0.5 && Math.abs(q1[0] - q2[0]) < 0.5) || (Math.abs(q0[1] - q1[1]) < 0.5 && Math.abs(q1[1] - q2[1]) < 0.5))) continue;
+        mp.push(q1);
+      }
+      horiz = 0; for (mi = 0; mi < mp.length - 1; mi++) horiz += dist(mp[mi], mp[mi + 1]);
+      seg.line = mp; seg.holes = gr.holes.map(function (o) { return { from: o.from, to: o.to, x: o.x, y: o.y, z: C }; });
       [ea, eb].forEach(function (e) { if (!e.ceiling) { drops += C - e.h; seg.verts.push({ room: e.room.id, wall: e.wall, pos: e.pos, z0: e.h, z1: C }); } });
     } else {
       horiz = dist([ea.x, ea.y], [eb.x, eb.y]); seg.line = [[ea.x, ea.y], [eb.x, eb.y]];

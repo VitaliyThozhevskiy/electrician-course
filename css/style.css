@@ -391,6 +391,8 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-says { padding-left: 18px; margin: 4px 0 6px; font-size: 13px; }
 .pl-says li { margin: 2px 0; }
 .pl-route.fade { opacity: .12; }
+.pl-case { fill: none; stroke: var(--bg); stroke-width: 6; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; opacity: .85; }
+.pl-case.fade { opacity: 0; }
 .pl-lock.on { background: var(--accent-soft) !important; border-color: var(--accent) !important; }
 .pl-htbl { font-size: 12.5px; margin: 6px 0; }
 .pl-htbl td, .pl-htbl th { padding: 3px 6px; }

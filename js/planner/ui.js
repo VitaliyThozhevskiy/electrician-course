@@ -340,13 +340,51 @@
     cp.up.concat(cp.down).forEach(function (s) { k[s.key] = 1; });
     return Object.keys(k).length ? k : null;
   }
+  // паралельні траси по стелі розводимо на окремі «доріжки», щоб вони не зливалися в одну лінію
+  function laneLines(segs) {
+    var GAP = 8, legs = [], out = {};
+    segs.forEach(function (g) {
+      if (g.plane !== "ceilGrid" || !g.line) return;
+      for (var i = 0; i < g.line.length - 1; i++) {
+        var a = g.line[i], b = g.line[i + 1], hz = Math.abs(a[1] - b[1]) < 0.5, vt = Math.abs(a[0] - b[0]) < 0.5;
+        if (!hz && !vt) continue;
+        legs.push({ k: g.key, i: i, hz: hz, c: hz ? a[1] : a[0], lo: Math.min(hz ? a[0] : a[1], hz ? b[0] : b[1]), hi: Math.max(hz ? a[0] : a[1], hz ? b[0] : b[1]) });
+      }
+    });
+    legs.sort(function (a, b) { return (a.hz - b.hz) || (a.c - b.c); });
+    var cl = [];
+    legs.forEach(function (l) { var last = cl[cl.length - 1]; if (last && last.hz === l.hz && Math.abs(l.c - last.c) < 4) last.legs.push(l); else cl.push({ hz: l.hz, c: l.c, legs: [l] }); });
+    var off = {};
+    cl.forEach(function (c) {
+      var ends = [];
+      c.legs.sort(function (a, b) { return a.lo - b.lo; }).forEach(function (l) {
+        var k = 0; while (k < ends.length && ends[k] > l.lo + 2) k++;
+        ends[k] = l.hi; l.lane = k;
+      });
+      c.legs.forEach(function (l) { off[l.k + "#" + l.i] = (l.lane - (ends.length - 1) / 2) * GAP; });
+    });
+    segs.forEach(function (g) {
+      if (g.plane !== "ceilGrid" || !g.line) return;
+      var L = g.line;
+      out[g.key] = L.map(function (q, j) {
+        var x = q[0], y = q[1];
+        [j - 1, j].forEach(function (i) {
+          if (i < 0 || i >= L.length - 1) return;
+          var o = off[g.key + "#" + i]; if (!o) return;
+          if (Math.abs(L[i][1] - L[i + 1][1]) < 0.5) y = q[1] + o; else x = q[0] + o;
+        });
+        return [x, y];
+      });
+    });
+    return out;
+  }
   function routesSvg(segs, s) {
-    var h = '<g class="pl-routes">', hk = live.on ? null : hlKeys(segs);
+    var h = '<g class="pl-routes">', hk = live.on ? null : hlKeys(segs), lanes = laneLines(segs);
     segs.forEach(function (g) {
       if (ui.gfilter && g.group !== ui.gfilter) return;
       var col = gcolor(g.group), cls = "pl-route p-" + g.plane + (hk ? (hk[g.key] ? " hl" : " fade") : ""), off = g.plane === "wallBottom" ? 22 : 6 + (proj.groups.findIndex(function (x) { return x.id === g.group; }) % 4) * 2.5;
       var hit = ' data-seg="' + esc(g.key) + '"';
-      if (g.line) h += '<polyline' + hit + ' points="' + g.line.map(function (q) { return q[0] + "," + q[1]; }).join(" ") + '" class="' + cls + '" style="stroke:' + col + '"/>';
+      if (g.line) { var pts = (lanes[g.key] || g.line).map(function (q) { return q[0] + "," + q[1]; }).join(" "); h += '<polyline points="' + pts + '" class="pl-case' + (hk && !hk[g.key] ? " fade" : "") + '"/><polyline' + hit + ' points="' + pts + '" class="' + cls + '" style="stroke:' + col + '"/>'; }
       g.pieces.forEach(function (pc) {
         var r = P.byId(proj.rooms, pc.room), a = wallPt(r, pc.wall, pc.p0, off), e = wallPt(r, pc.wall, pc.p1, off);
         h += '<line' + hit + ' x1="' + a[0] + '" y1="' + a[1] + '" x2="' + e[0] + '" y2="' + e[1] + '" class="' + cls + '" style="stroke:' + col + '"/>';
