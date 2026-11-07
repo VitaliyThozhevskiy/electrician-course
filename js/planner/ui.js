@@ -302,7 +302,7 @@
     });
     var gname = function (s) { var g = P.byId(proj.groups, s.group); return g ? g.name : ""; };
     var purpose = function (s) { return s.role === "switch" ? "до вимикача" : s.role === "light" ? "світло" : P.byId(proj.groups, s.group) && P.byId(proj.groups, s.group).kind === "light" ? "живлення світла" : "розетки / техніка"; };
-    var h = '<div class="card pl-card pl-roomcab"><h3>🧵 Кабелі: ' + esc(r.name) + "</h3>" +
+    var h = '<div class="card pl-card pl-roomcab"><h3>🧵 Кабелі: ' + esc(r.name) + "</h3>" + (ui.v3 && ui.v3room === rid ? "" : '<button type="button" class="btn small" data-act="v3in" data-id="' + rid + '">🧊 Подивитися зсередини в 3D</button>') +
       "<p><b>Крізь стіни проходить " + rc.cross.length + " " + plural(rc.cross.length, "кабель", "кабелі", "кабелів") + "</b>" + (rc.cross.length ? " (" + tallyTxt(cnt) + ")" : "") + ".<br><b>Усередині кімнати — ще " + rc.inside.length + "</b>" + (rc.inside.length ? " (" + tallyTxt(rc.inside.reduce(function (o, s) { tally(o, s); return o; }, {})) + ")" : "") + ".</p>" +
       "<p class='meta'>На плані підсвічено ці траси. Клікни рядок — побачиш саму трасу.</p>";
     Object.keys(byNb).forEach(function (k) {
@@ -395,6 +395,56 @@
     return h + "</g>";
   }
 
+
+  // ---------- 3D-вид ----------
+  var v3ctl = null;
+  function plan3dHtml() {
+    var r = ui.v3room ? P.byId(proj.rooms, ui.v3room) : null;
+    return '<div class="pl-bar pl-3dbar"><label class="pl-barbtn">🧊 <select data-act="v3room"><option value="">Уся квартира</option>' + proj.rooms.map(function (q) { return '<option value="' + q.id + '"' + (q.id === ui.v3room ? " selected" : "") + ">Зсередини: " + esc(q.name) + "</option>"; }).join("") + "</select></label>" +
+      (r ? '<button type="button" data-act="v3out" class="' + (ui.v3out ? "on" : "") + '">' + (ui.v3out ? "👁 Стати всередину" : "🔄 Крутити кімнату ззовні") + "</button>" : "") + '<button type="button" data-act="v3reset">↺ Скинути вид</button><button type="button" data-act="v3top">' + (r ? "⬆ На стелю" : "⬇ Згори") + "</button>" +
+      (r && !ui.v3out ? ["N", "E", "S", "W"].map(function (w) { return '<button type="button" data-act="v3look" data-v="' + w + '">→ ' + { N: "верхня", E: "права", S: "нижня", W: "ліва" }[w] + "</button>"; }).join("") : "") + "</div>" +
+      '<canvas class="pl-3d" aria-label="3D-вид проводки"></canvas>' +
+      '<p class="pl-help">' + (r && ui.v3out ? "Кімната «" + esc(r.name) + "» окремо: тягни — обертати, колесо — масштаб. Червоні таблички — скільки кабелів заходить крізь стіну і звідки." : r ? "Ти стоїш у центрі кімнати «" + esc(r.name) + "». Тягни — повертай голову, колесо або два пальці — наблизити, Shift + тягни (права кнопка) — пройтися. Червоні таблички — скільки кабелів заходить крізь стіну і звідки. Клікни точку — побачиш її кабель." :
+        "Тягни — обертати, колесо або два пальці — масштаб, Shift + тягни (права кнопка) — зсунути. Клікни точку — підсвітиться її кабель від щита. Обери кімнату зверху, щоб подивитися зсередини.") + "</p>";
+  }
+  function init3d(cv) {
+    var segs = calc().segs, lanes = laneLines(segs), rid = ui.v3room && P.byId(proj.rooms, ui.v3room) ? ui.v3room : "";
+    var hk = sel && sel.t === "point" ? hlKeys(segs) : null, holes = [], keep = {};
+    if (rid) {
+      var rc = roomCables(rid, segs), rk = {};
+      rc.cross.forEach(function (x) { rk[x.s.key] = 1; }); rc.inside.forEach(function (s) { rk[s.key] = 1; });
+      if (!hk) hk = rk; else Object.keys(hk).forEach(function (k) { if (!rk[k]) delete hk[k]; });
+      Object.keys(rk).forEach(function (k) { var s = segs.filter(function (x) { return x.key === k; })[0]; if (s) { keep[s.a] = 1; keep[s.b] = 1; } });
+      // таблички на отворах: групуємо отвори, що поруч (до 40 см), і рахуємо кабелі
+      var cl = [];
+      rc.cross.forEach(function (x) {
+        x.holes.forEach(function (o) {
+          var nb = o.from === rid ? o.to : o.from, c = cl.filter(function (q) { return q.nb === nb && Math.hypot(q.x - o.x, q.y - o.y) < 40; })[0];
+          if (!c) cl.push(c = { nb: nb, x: o.x, y: o.y, keys: {} });
+          c.keys[x.s.key] = 1;
+        });
+      });
+      holes = cl.map(function (c) { var n = Object.keys(c.keys).length, nr = P.byId(proj.rooms, c.nb); return { x: c.x, y: c.y, n: n, text: "↔ " + (nr ? nr.name.split(",")[0] : "?") + ": " + n + " " + plural(n, "кабель", "кабелі", "кабелів"), color: "#c0392b" }; });
+    }
+    var sc = P.scene3d(proj, segs, {
+      lanes: lanes, hk: hk, room: rid, orbit: !!ui.v3out, holes: holes, keepIds: keep, selId: sel && sel.t === "point" ? sel.id : sel && sel.t === "panel" ? "panel" : null,
+      colorOf: function (s) { return gcolor(s.group); },
+      dotOf: function (t) {
+        var cat = P.KINDS[t.kind].cat, lit = live.on && cat === "light" && isLit(t);
+        var col = cat === "light" ? (lit ? "#ffd54a" : "#e0a040") : cat === "switch" ? "#f2f2f2" : cat === "socket" ? "#ff7a50" : cat === "box" ? "#9e9e9e" : "#4fc3f7";
+        return { color: col, r: cat === "box" ? 6 : cat === "light" ? 6 : 5, shape: cat === "box" || cat === "socket" ? "sq" : null, glow: lit, tag: P.tagOf(proj, t) + (t.label ? " " + t.label.replace(/^[\dк]+ · /, "").slice(0, 22) : ""), alpha: rid && t.room !== rid ? 0.6 : 1 };
+      }
+    });
+    v3ctl = P.view3d(cv, sc, {
+      onPick: function (id) {
+        if (id === "panel") sel = { t: "panel" };
+        else if (id) sel = { t: "point", id: id };
+        else sel = rid ? { t: "room", id: rid } : null;
+        draw();
+      }
+    });
+  }
+
   // ---------- вкладка «План і стеля» ----------
   function planTab() {
     var kinds = ui.layer === "ceiling" ? CEIL_KINDS : WALL_KINDS;
@@ -403,7 +453,7 @@
       '<button type="button" data-tool="select" class="' + (ui.tool === "select" ? "on" : "") + '">✥ Вибір</button>' +
       kinds.map(function (k) { return '<button type="button" data-tool="add:' + k + '" class="' + (ui.tool === "add:" + k ? "on" : "") + '">+ ' + SHORT[k] + "</button>"; }).join("") +
       (true ? '<button type="button" data-tool="ac" class="' + (ui.tool === "ac" ? "on" : "") + '">+ Кондиціонер</button>' : "") +
-      '<button type="button" data-act="live" class="pl-livebtn' + (live.on ? " on" : "") + '">' + (live.on ? "✕ Зняти напругу" : "🔌 Під напругою") + "</button>" +
+      '<button type="button" data-act="v3" class="pl-3dbtn' + (ui.v3 ? " on" : "") + '">' + (ui.v3 ? "✕ 2D-план" : "🧊 3D") + "</button>" + '<button type="button" data-act="live" class="pl-livebtn' + (live.on ? " on" : "") + '">' + (live.on ? "✕ Зняти напругу" : "🔌 Під напругою") + "</button>" +
       (ui.layer === "walls" ? '<button type="button" data-tool="panel" class="' + (ui.tool === "panel" ? "on" : "") + '">Щит сюди</button>' : "") +
       '<button type="button" data-tool="del" class="' + (ui.tool === "del" ? "on" : "") + '">✕ Видалити</button>' + '<button type="button" data-act="msel" class="' + (ui.msel ? "on" : "") + '" title="Виділяти кілька точок дотиком (на ПК — Shift/Ctrl + клік або рамка з Shift)">⬚ Кілька</button>' + lockBtn() + zoomBtns() + "</div>" +
       '<div class="pl-bar pl-bar2"><label class="pl-barbtn"><input type="checkbox" data-act="routes"' + (ui.showRoutes ? " checked" : "") + "> Траси</label>" +
@@ -412,7 +462,7 @@
       (ui.tool === "ac" ? '<p class="pl-help">Клікни всередині кімнати — планувальник підбере кондиціонер за площею, поставить вивід під стелею і створить окрему лінію з автоматом і кабелем.</p>' : "") +
       (ui.tool.indexOf("add:") === 0 ? '<p class="pl-help">' + (ui.tool === "add:ceil" || ui.tool === "add:spot" ? "Клікни всередині кімнати — світильник стане в цю точку стелі." : "Клікни біля стіни — точка стане на найближчу стіну з типовою висотою. Висоту і відстань уточниш справа або у вкладці «Стіни».") + "</p>" : "") +
       (live.on ? '<p class="pl-help">Мережа під напругою: клацай вимикачі на плані — світильники засвітяться. Клацни розетку, щоб побачити покази тестера. Автомати й ПЗВ — праворуч.</p>' : "") +
-      planSvg("plan") + '</div><div class="pl-side">' + (live.on ? liveSide() : pointSide()) + "</div></div>";
+      (ui.v3 ? plan3dHtml() : planSvg("plan")) + '</div><div class="pl-side">' + (live.on ? liveSide() : pointSide()) + "</div></div>";
     return h;
   }
 
@@ -993,6 +1043,12 @@
     if (b.dataset.wall) { ui.wall = b.dataset.wall; save(); draw(); return; }
     var a = b.dataset.act, id = b.dataset.id;
     if (a === "live") { live.on = !live.on; if (live.on) { live.sw = {}; live.brk = {}; ui.tool = "select"; } draw(); return; }
+    if (a === "v3") { ui.v3 = !ui.v3; if (ui.v3) ui.v3room = sel && sel.t === "room" ? sel.id : sel && sel.t === "point" && ui.v3room ? ui.v3room : ""; draw(); return; }
+    if (a === "v3in") { ui.v3 = true; ui.v3room = id; ui.tab = "plan"; sel = { t: "room", id: id }; draw(); return; }
+    if (a === "v3out") { ui.v3out = !ui.v3out; draw(); return; }
+    if (a === "v3reset") { if (v3ctl) v3ctl.reset(); return; }
+    if (a === "v3top") { if (v3ctl) v3ctl.reset(true); return; }
+    if (a === "v3look") { if (v3ctl) v3ctl.turn({ N: 0, E: Math.PI / 2, S: Math.PI, W: -Math.PI / 2 }[b.dataset.v]); return; }
     if (a === "schbig") { bigSch = !bigSch; draw(); return; }
     if (a === "lsw") { var lk = id + ":" + b.dataset.v; live.sw[lk] = live.sw[lk] ? 0 : 1; draw(); return; }
     if (a === "lbrk") { live.brk[id] = isOn(id) ? 0 : 1; draw(); return; }
@@ -1075,6 +1131,7 @@
     if (a === "gfilter") { ui.gfilter = el.value; draw(); return; }
     if (a === "wroom") { ui.wallRoom = el.value; ui.wall = busiestWall(P.byId(proj.rooms, el.value)); sel = null; save(); draw(); return; }
     if (a === "stepdone") { proj.done = proj.done || {}; proj.done[el.dataset.id] = el.checked; save(); draw(); return; }
+    if (a === "v3room") { ui.v3room = el.value; sel = el.value ? { t: "room", id: el.value } : null; draw(); return; }
     if (a === "cabroom") { sel = el.value ? { t: "room", id: el.value } : null; draw(); return; }
     if (a === "mgroup") { multi.forEach(function (mid) { var t2 = P.byId(proj.points, mid); if (t2 && t2.kind !== "jbox") t2.group = el.value || null; }); changed(); return; }
     if (a === "ctl") {
@@ -1144,6 +1201,7 @@
 
   // ---------- вказівник на SVG ----------
   function afterDraw() {
+    var cv3 = host.querySelector("canvas.pl-3d"); if (cv3) { try { init3d(cv3); } catch (er) { console.error(er); } }
     var svg = host.querySelector(".pl-plan, .pl-elev"); if (!svg) return;
     var elev = svg.classList.contains("pl-elev"), drag = null;
     function pt(e) { var m = svg.getScreenCTM(); if (!m) return [0, 0]; var q = svg.createSVGPoint(); q.x = e.clientX; q.y = e.clientY; q = q.matrixTransform(m.inverse()); return [q.x, q.y]; }

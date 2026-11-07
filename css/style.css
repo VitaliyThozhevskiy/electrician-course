@@ -386,6 +386,10 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-sch.big .pl-rcl { padding-left: 16px; margin: 4px 0 8px; font-size: 13px; }
 .pl-rcl li { margin: 3px 0; }
 .pl-roomcab h4 { margin: 10px 0 2px; }
+canvas.pl-3d { display: block; width: 100%; height: min(72vh, 720px); min-height: 360px; border: 1px solid var(--border); border-radius: 10px; touch-action: none; cursor: grab; background: var(--bg); }
+canvas.pl-3d:active { cursor: grabbing; }
+.pl-3dbar { flex-wrap: wrap; }
+.pl-3dbtn.on { background: var(--accent); color: #fff; }
 .pl-says { font-size: 15px; }
 .pl-sch-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.55); }
 .pl-says { padding-left: 18px; margin: 4px 0 6px; font-size: 13px; }
