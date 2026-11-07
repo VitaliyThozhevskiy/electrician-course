@@ -345,6 +345,48 @@ footer.site { color: var(--muted); font-size: .85rem; margin-top: 50px; padding-
 .pl-calib { fill: var(--bad); }
 .pl-route { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; stroke-linecap: round; opacity: .9; cursor: pointer; }
 .pl-route.p-ceiling, .pl-route.p-ceilGrid { stroke-dasharray: 8 5; stroke-linejoin: round; }
+.pl-scheme { width: 100%; height: auto; display: block; margin: 6px 0; font-family: inherit; }
+.pl-scheme .sch-panel { fill: var(--surface, #1e1e1e); stroke: var(--muted, #888); stroke-width: 1.2; }
+.pl-scheme .sch-box { fill: none; stroke: var(--muted, #888); stroke-width: 1; stroke-dasharray: 4 3; }
+.pl-scheme .sch-t { fill: var(--text, #ddd); font-size: 10px; }
+.pl-scheme .sch-t.b { font-weight: 700; font-size: 11px; }
+.pl-scheme .sch-t.s { font-size: 9.5px; fill: var(--muted, #999); }
+.pl-scheme .sch-t.xs { font-size: 8px; fill: var(--muted, #999); }
+.pl-scheme .sch-t.on { fill: #3fb950; font-weight: 700; }
+.pl-scheme .sch-t.off { fill: #f85149; font-weight: 700; }
+.pl-scheme .sch-w { fill: none; stroke-width: 2.4; stroke-linejoin: round; }
+.pl-scheme .sch-w.ph { stroke: #b0643a; }
+.pl-scheme .sch-w.ph.off { opacity: .45; }
+.pl-scheme .sch-w.ph.on { stroke: #ff6a3d; stroke-width: 3; stroke-dasharray: 7 5; animation: schflow .9s linear infinite; }
+.pl-scheme .sch-w.T { stroke: #9a9a9a; }
+.pl-scheme .sch-w.T.on { stroke: #ff6a3d; }
+.pl-scheme .sch-w.Lp { stroke: #555; }
+.pl-scheme .sch-w.Lp.on { stroke: #ff6a3d; }
+.pl-scheme .sch-w.N { stroke: #1f6fd1; }
+.pl-scheme .sch-w.N.on { stroke-dasharray: 7 5; animation: schflow .9s linear infinite reverse; }
+.pl-scheme .sch-w.PE { stroke: #7ba51a; stroke-dasharray: 10 3 2 3; }
+.pl-scheme .sch-j { fill: var(--text, #ddd); }
+.pl-scheme .sch-term { fill: var(--bg, #111); stroke: var(--text, #ddd); stroke-width: 1.4; }
+.pl-scheme .sch-blade { stroke: var(--text, #ddd); stroke-width: 2.6; stroke-linecap: round; }
+.pl-scheme .sch-blade.on { stroke: #ff6a3d; }
+.pl-scheme .sch-sw { cursor: pointer; }
+.pl-scheme .sch-hit { fill: transparent; stroke: transparent; }
+.pl-scheme .sch-sw:hover .sch-hit { fill: rgba(255, 140, 60, .08); stroke: rgba(255, 140, 60, .5); }
+.pl-scheme .sch-sw.me .sch-hit { stroke: #ff8c3c; stroke-dasharray: 3 3; }
+.pl-scheme .sch-lc { fill: var(--bg, #111); stroke: var(--text, #ddd); stroke-width: 2; }
+.pl-scheme .sch-lx { stroke: var(--text, #ddd); stroke-width: 1.6; fill: none; }
+.pl-scheme .sch-lamp.lit .sch-lc { fill: #ffd54a; stroke: #ffb300; }
+.pl-scheme .sch-lamp.lit .sch-lx { stroke: #7a5200; }
+.pl-scheme .sch-glow { fill: rgba(255, 213, 74, .3); }
+@keyframes schflow { to { stroke-dashoffset: -12; } }
+@media (prefers-reduced-motion: reduce) { .pl-scheme .sch-w { animation: none !important; } }
+.pl-schbtn { margin: 4px 0; }
+.pl-sch.big { position: fixed; z-index: 1001; top: 4vh; left: 50%; transform: translateX(-50%); width: min(1000px, 94vw); max-height: 92vh; overflow: auto; background: var(--surface); box-shadow: var(--shadow, 0 10px 40px rgba(0,0,0,.5)); padding: 14px 18px; margin: 0; }
+.pl-sch.big .pl-scheme { max-width: none !important; }
+.pl-sch.big .pl-says { font-size: 15px; }
+.pl-sch-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.55); }
+.pl-says { padding-left: 18px; margin: 4px 0 6px; font-size: 13px; }
+.pl-says li { margin: 2px 0; }
 .pl-route.fade { opacity: .12; }
 .pl-lock.on { background: var(--accent-soft) !important; border-color: var(--accent) !important; }
 .pl-htbl { font-size: 12.5px; margin: 6px 0; }

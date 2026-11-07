@@ -382,6 +382,7 @@
       h += '<table class="pl-meter"><tr><th>Тестер</th><th>Показ</th></tr><tr><td>L–N</td><td>' + (pw ? "≈ 230 В" : "0 В") + "</td></tr><tr><td>L–PE</td><td>" + (pw ? "≈ 230 В" : "0 В") + "</td></tr><tr><td>N–PE</td><td>0 В</td></tr></table>" +
         "<p>" + (pw ? "Напруга є. N–PE ≈ 0 В — нуль і земля розділені правильно в щиті." : "Знеструмлено: " + esc(gWhyOff(g)) + ".") + "</p>";
       if (t.device) { var d = P.device(t.device); if (d && d.id) h += "<p class='meta'>" + esc(d.name) + ": " + (pw ? "працює" : "не працює") + ".</p>"; }
+      if ((t.ctl || []).length) h += schWrap("⚡ Схема", schemeSvg(t));
     } else if (t.kind === "jbox") h += "<p class='meta'>У коробці напруга є, коли увімкнено автомат групи. Перед роботою в коробці — вимкни автомат і перевір відсутність напруги індикатором.</p>";
     return h + "</div>";
   }
@@ -455,6 +456,167 @@
     return out;
   }
   function sameEnd(v, ref) { var e = P.endpoint(proj, ref); return e && !e.ceiling && e.room.id === v.room && e.wall === v.wall && Math.abs(e.pos - v.pos) < 1; }
+
+  // ---------- принципова схема: щит → коробка → вимикачі → світильник ----------
+  var FN = { L: "фаза від щита", N: "нуль — від світильника назад до щита", PE: "захисне заземлення (корпус)", "L'": "вимкнена фаза — від вимикача до світильника", "L1'": "вимкнена фаза, клавіша 1", "L2'": "вимкнена фаза, клавіша 2",
+    T1: "перемичка 1 між прохідними", T2: "перемичка 2 між прохідними", IN1: "перемичка 1 (з боку першого прохідного)", IN2: "перемичка 2 (з боку першого прохідного)", OUT1: "перемичка 1 (до другого прохідного)", OUT2: "перемичка 2 (до другого прохідного)",
+    "Lпост": "постійна фаза — живить таймер", "резерв": "запасна — заізолюй", "—": "не використовується — заізолюй" };
+  function swTag(id) { var s = P.byId(proj.points, id); return s ? P.tagOf(proj, s) : "?"; }
+  // ланцюжки керування світильником: [{multi:bool, els:[{id, key, type:"spst"|"pass1"|"cross"|"pass2"}]}]
+  function chainsOf(t) {
+    var c = t.ctl || [];
+    if (!c.length) return [];
+    if (multiWay(t)) {
+      var ids = c.map(function (x) { return x.sw; }), pass = ids.filter(function (id) { return P.byId(proj.points, id).kind === "pass"; }), cr = ids.filter(function (id) { return P.byId(proj.points, id).kind === "cross"; });
+      if (pass.length !== 2) return [{ bad: "Для керування з кількох місць потрібно рівно два прохідні вимикачі (перехресних між ними — скільки завгодно). Зараз прохідних: " + pass.length + "." }];
+      return [{ multi: true, els: [{ id: pass[0], key: 1, type: "pass1" }].concat(cr.map(function (id) { return { id: id, key: 1, type: "cross" }; }), [{ id: pass[1], key: 1, type: "pass2" }]) }];
+    }
+    var seen = {}, out = [];
+    c.forEach(function (x) { var k = x.sw + ":" + x.key; if (seen[k]) return; seen[k] = 1; var s = P.byId(proj.points, x.sw); if (s) out.push({ els: [{ id: x.sw, key: x.key, type: s.kind === "pass" || s.kind === "cross" ? "bad" : "spst" }] }); });
+    return out;
+  }
+  function sigOf(t) { return chainsOf(t).map(function (ch) { return (ch.els || []).map(function (e) { return e.id + ":" + e.key; }).join(">"); }).sort().join("|"); }
+  function schemeSvg(t, me) {
+    var chains = chainsOf(t), g = P.byId(proj.groups, t.group), pw = gPowered(g), lit = isLit(t);
+    if (!chains.length) return "<p class='meta'>Світильник не прив'язаний до вимикача — познач вимикач у «Чим вмикається».</p>";
+    if (chains[0].bad) return '<div class="warn">' + esc(chains[0].bad) + "</div>";
+    var n = chains.length, maxEl = Math.max.apply(null, chains.map(function (ch) { return ch.els.length; }));
+    var xP = 64, xB = 100, x0 = 165, DX = 96, xl = x0 + (maxEl - 1) * DX + 80, W = xl + 100;
+    var yTop = 46, CH = 84, yLamp = yTop + n * CH - 6, yN = yLamp + 52, yPE = yN + 24, H = yPE + 22;
+    var timer = t.kind === "fan" && t.timer;
+    var mates = proj.points.filter(function (x) { return x.id !== t.id && P.KINDS[x.kind].cat === "light" && x.group === t.group && sigOf(x) === sigOf(t); });
+    var pn = P.panel(proj), dev = pn.devices.filter(function (d) { return d.group === (g && g.id); })[0];
+    var up = cablePath(t.id, calc().segs).up, box = null;
+    up.forEach(function (s) { var bp = P.byId(proj.points, s.b); if (bp && bp.kind === "jbox") box = bp; });
+    var h = "", path = [], says = [];
+    function ln(pts, cls, title) { h += '<polyline points="' + pts.map(function (q) { return q[0] + "," + q[1]; }).join(" ") + '" class="sch-w ' + cls + '"' + (title ? "><title>" + esc(title) + "</title></polyline>" : "/>"); }
+    function dotJ(x, y) { h += '<circle cx="' + x + '" cy="' + y + '" r="3.6" class="sch-j"/>'; }
+    function txt(x, y, s, cls, anchor) { h += '<text x="' + x + '" y="' + y + '" class="sch-t ' + (cls || "") + '"' + (anchor ? ' text-anchor="' + anchor + '"' : "") + ">" + esc(s) + "</text>"; }
+    function term(x, y) { h += '<circle cx="' + x + '" cy="' + y + '" r="3" class="sch-term"/>'; }
+    // щит
+    h += '<rect x="6" y="' + (yTop - 30) + '" width="' + (xP - 6) + '" height="' + (yPE - yTop + 42) + '" rx="6" class="sch-panel"/>';
+    txt(35, yTop - 14, "Щит", "b", "middle");
+    txt(35, yTop + 22, dev ? dev.tag : "QF?", "b", "middle");
+    txt(35, yTop + 36, g ? g.curve + g.In : "", "", "middle");
+    if (g && (g.prot === "rcbo" || (g.prot === "rcd" && P.byId(proj.rcds, g.rcd)))) txt(35, yTop + 50, (g.prot === "rcbo" ? g.dI : P.byId(proj.rcds, g.rcd).dI) + " мА", "", "middle");
+    txt(35, yTop + 70, pw ? "увімк." : "вимк.", pw ? "on" : "off", "middle");
+    // коробка
+    h += '<rect x="' + (xB - 16) + '" y="' + (yTop - 30) + '" width="32" height="' + (yPE - yTop + 42) + '" rx="5" class="sch-box"/>';
+    txt(xB, yTop - 16, box ? P.tagOf(proj, box) : "коробка", "s", "middle");
+    var phase = pw ? " ph on" : " ph off";
+    // L до коробки і розподіл на ланцюжки
+    var yIns = chains.map(function (ch, i) { var y = yTop + i * CH; return ch.els[0].type === "pass1" ? y + 20 : y; });
+    ln([[xP, yTop], [xB, yTop]], "L" + phase, "L — фаза від автомата");
+    txt(xP + 4, yTop - 5, "L", "s");
+    dotJ(xB, yTop);
+    if (n > 1 || yIns[0] !== yTop) ln([[xB, yTop], [xB, Math.max.apply(null, yIns)]], "L" + phase);
+    says.push("Фаза L: автомат " + (dev ? dev.tag : "") + " → " + (box ? "коробка " + P.tagOf(proj, box) : "коробка") + (pw ? "" : " — зараз автомат або ПЗВ вимкнено, напруги немає") + ".");
+    if (timer) {
+      ln([[xB + 24, yTop], [xB + 24, yTop - 22], [xl + 12, yTop - 22], [xl + 12, yLamp - 11]], "Lp" + phase, "Lпост — постійна фаза на таймер"); dotJ(xB + 24, yTop);
+      txt(xl + 16, yTop - 26, "Lпост → L", "s");
+    }
+    chains.forEach(function (ch, ci) {
+      var y = yTop + ci * CH, yIn = yIns[ci], off = ((n - 1) / 2 - ci) * 12, xo, yo, on;
+      ln([[xB, yIn], [x0 - 28, yIn]], "L" + phase); if (ci > 0 || yIn !== yTop) dotJ(xB, yIn);
+      var trav = 0, live1 = pw, chainSay = [];
+      ch.els.forEach(function (e, k) {
+        var x = x0 + k * DX, st = live.sw[e.id + ":" + e.key] ? 1 : 0, sp = P.byId(proj.points, e.id), cls = "sch-sw" + (e.id === me ? " me" : "");
+        h += '<g class="' + cls + '" data-act="lsw" data-id="' + esc(e.id) + '" data-v="' + e.key + '"><title>Клацни, щоб перемкнути</title><rect x="' + (x - 36) + '" y="' + (y - 26) + '" width="72" height="' + (e.type === "spst" ? 44 : 78) + '" rx="6" class="sch-hit"/>';
+        if (e.type === "spst") {
+          term(x - 28, y); term(x + 28, y);
+          h += '<line x1="' + (x - 28) + '" y1="' + y + '" x2="' + (st ? x + 28 : x + 20) + '" y2="' + (st ? y : y - 20) + '" class="sch-blade' + (live1 && st ? " on" : "") + '"/>';
+          live1 = live1 && !!st; xo = x + 28; yo = y;
+          txt(x, y + 26, swTag(e.id) + (sp.kind === "sw2" ? " кл." + e.key : ""), "b", "middle");
+          chainSay.push(swTag(e.id) + (st ? " замкнений" : " розімкнений"));
+        } else if (e.type === "pass1") {
+          term(x - 28, y + 20); term(x + 28, y); term(x + 28, y + 40);
+          h += '<line x1="' + (x - 28) + '" y1="' + (y + 20) + '" x2="' + (x + 28) + '" y2="' + (st ? y + 40 : y) + '" class="sch-blade' + (live1 ? " on" : "") + '"/>';
+          txt(x - 30, y + 14, "COM", "xs", "end");
+          trav = st; xo = x + 28;
+          txt(x, y + 58, swTag(e.id), "b", "middle"); txt(x, y + 70, "прохідний", "xs", "middle");
+          chainSay.push(swTag(e.id) + " → перемичка " + (st + 1));
+        } else if (e.type === "cross") {
+          term(x - 28, y); term(x - 28, y + 40); term(x + 28, y); term(x + 28, y + 40);
+          if (!st) { h += '<line x1="' + (x - 28) + '" y1="' + y + '" x2="' + (x + 28) + '" y2="' + y + '" class="sch-blade' + (live1 && trav === 0 ? " on" : "") + '"/><line x1="' + (x - 28) + '" y1="' + (y + 40) + '" x2="' + (x + 28) + '" y2="' + (y + 40) + '" class="sch-blade' + (live1 && trav === 1 ? " on" : "") + '"/>'; }
+          else { h += '<line x1="' + (x - 28) + '" y1="' + y + '" x2="' + (x + 28) + '" y2="' + (y + 40) + '" class="sch-blade' + (live1 && trav === 0 ? " on" : "") + '"/><line x1="' + (x - 28) + '" y1="' + (y + 40) + '" x2="' + (x + 28) + '" y2="' + y + '" class="sch-blade' + (live1 && trav === 1 ? " on" : "") + '"/>'; trav = 1 - trav; }
+          txt(x, y + 58, swTag(e.id), "b", "middle"); txt(x, y + 70, "перехресний", "xs", "middle");
+          chainSay.push(swTag(e.id) + (st ? " перехрещує перемички → тепер " + (trav + 1) : " пропускає прямо → перемичка " + (trav + 1)));
+        } else if (e.type === "pass2") {
+          term(x - 28, y); term(x - 28, y + 40); term(x + 28, y + 20);
+          var pick = st ? 0 : 1;
+          h += '<line x1="' + (x + 28) + '" y1="' + (y + 20) + '" x2="' + (x - 28) + '" y2="' + (pick ? y + 40 : y) + '" class="sch-blade' + (live1 && trav === pick ? " on" : "") + '"/>';
+          txt(x + 30, y + 34, "COM", "xs");
+          chainSay.push(swTag(e.id) + " стоїть на перемичці " + (pick + 1) + (trav === pick ? " — фаза проходить" : " — а фаза на іншій, світла немає"));
+          live1 = live1 && trav === pick; xo = x + 28; yo = y + 20;
+          txt(x, y + 58, swTag(e.id), "b", "middle"); txt(x, y + 70, "прохідний", "xs", "middle");
+        }
+        h += "</g>";
+        // перемички до наступного
+        var nx = ch.els[k + 1];
+        if (nx && (e.type === "pass1" || e.type === "cross")) {
+          [0, 1].forEach(function (tr) { ln([[x + 28, y + tr * 40], [x + DX - 28, y + tr * 40]], "T" + (pw && trav === tr ? " ph on" : " ph off"), "Перемичка " + (tr + 1) + " (перекидний провідник)"); });
+          txt(x + DX / 2, y - 5, "перемичка 1", "xs", "middle"); txt(x + DX / 2, y + 35, "перемичка 2", "xs", "middle");
+        }
+      });
+      on = live1;
+      var xt = xl + off;
+      ln([[xo, yo], [xt, yo], [xt, yLamp - 15]], "Ls" + (on ? " ph on" : " ph off"), (n > 1 ? "L" + (ci + 1) + "'" : "L'") + " — вимкнена фаза до світильника");
+      txt(xo + 6, yo - 5, timer ? "L' → S" : n > 1 ? "L" + (ci + 1) + "'" : "L'", "s");
+      says.push((ch.multi ? "Керування з " + ch.els.length + " місць: " : "") + chainSay.join("; ") + ". " + (on ? "Фаза доходить до світильника." : "До світильника фаза не доходить."));
+    });
+    // світильник
+    h += '<g class="sch-lamp' + (lit ? " lit" : "") + '">' + (lit ? '<circle cx="' + xl + '" cy="' + yLamp + '" r="28" class="sch-glow"/>' : "") + '<circle cx="' + xl + '" cy="' + yLamp + '" r="16" class="sch-lc"/>' +
+      (t.kind === "fan" ? '<path d="M' + xl + " " + yLamp + "l0 -11M" + xl + " " + yLamp + "l9.5 5.5M" + xl + " " + yLamp + 'l-9.5 5.5" class="sch-lx"/>' : '<path d="M' + (xl - 11) + " " + (yLamp - 11) + "L" + (xl + 11) + " " + (yLamp + 11) + "M" + (xl + 11) + " " + (yLamp - 11) + "L" + (xl - 11) + " " + (yLamp + 11) + '" class="sch-lx"/>') + "</g>";
+    txt(xl + 22, yLamp - 20, P.tagOf(proj, t), "b");
+    if (mates.length) txt(xl + 36, yLamp + 18, "+" + mates.length + " паралельно", "xs");
+    // N і PE
+    ln([[xl, yLamp + 16], [xl, yN], [xP, yN]], "N" + (lit ? " on" : ""), "N — нуль");
+    ln([[xl + 16, yLamp], [xl + 30, yLamp], [xl + 30, yPE], [xP, yPE]], "PE", "PE — захисне заземлення");
+    dotJ(xB, yN); dotJ(xB, yPE);
+    txt(xP + 4, yN - 5, "N", "s"); txt(xP + 4, yPE - 5, "PE", "s");
+    var svg = '<svg class="pl-scheme" viewBox="0 0 ' + W + " " + H + '" style="max-width:' + W * 1.15 + 'px">' + h + "</svg>";
+    return svg + '<ul class="pl-says">' + says.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") + "<li><b>" + (t.kind === "fan" ? (lit ? "🌀 Вентилятор крутиться." : timer && pw ? "Вентилятор стоїть (таймер ще може докрутити кілька хвилин)." : "Вентилятор стоїть.") : lit ? "💡 Світильник світиться." : "Світильник не світиться.") + "</b></li></ul>" +
+      '<p class="meta">Це принципова схема — як струм іде логічно. Фізично всі точки ● — це клеми WAGO в коробці' + (box ? " " + esc(P.tagOf(proj, box)) : "") + ": від неї окремий кабель іде до кожного вимикача і до світильника. Клацай вимикачі на схемі — вони перемикаються, а світильник засвічується так само, як у режимі «Під напругою».</p>";
+  }
+  // усі кабелі, потрібні для цієї точки: від щита до неї і до кожного вимикача, з призначенням кожної жили
+  function wiresHtml(t) {
+    var segs = calc().segs, list = [], seen = {};
+    function add(s) { if (s && !seen[s.key]) { seen[s.key] = 1; list.push(s); } }
+    cablePath(t.id, segs).up.forEach(add);
+    chainsOf(t).forEach(function (ch) { (ch.els || []).forEach(function (e) { cablePath(e.id, segs).up.forEach(add); }); });
+    if (!list.length) return "";
+    var ch0 = chainsOf(t)[0], firstPass = ch0 && ch0.multi ? ch0.els[0].id : null, lastPass = ch0 && ch0.multi ? ch0.els[ch0.els.length - 1].id : null;
+    var sum = {};
+    var rows = list.map(function (s) {
+      sum[s.cable] = (sum[s.cable] || 0) + s.len;
+      var cs = P.cores(proj, s), purpose = s.role === "feed" ? "живлення" : s.role === "switch" ? "до вимикача" : "до світильника";
+      return "<li><b>" + esc(P.labelRef(proj, s.a).split(" (")[0]) + " → " + esc(P.labelRef(proj, s.b).split(" (")[0]) + "</b> <span class='meta'>· " + s.cable + " · " + P.nf(s.len / 100) + " м · " + purpose + "</span><ul class='pl-conn'>" +
+        cs.map(function (c) {
+          var f = FN[c.f] || c.f;
+          if (c.f === "COM") f = s.b === firstPass ? "COM — сюди фаза L з коробки" : s.b === lastPass ? "COM — звідси вимкнена фаза йде на світильник" : "загальна клема COM";
+          if (s.role === "switch" && c.f === "L") f = "фаза з коробки на вимикач";
+          return "<li>" + dot(c.c) + "<span><b>" + esc(P.COLORS[c.c]) + "</b> — " + esc(c.f) + ": " + esc(f) + (c.mark ? " (" + esc(c.mark) + ")" : "") + "</span></li>";
+        }).join("") + "</ul></li>";
+    });
+    return '<details class="pl-path"><summary>🧵 Усі кабелі й жили для цієї точки (' + list.length + ")</summary><ol class='pl-pathl'>" + rows.join("") + "</ol><p class='meta'>Разом: " +
+      Object.keys(sum).map(function (k) { return k + " — " + P.nf(sum[k] / 100) + " м"; }).join(", ") + " (без запасу на коробки). Кабелі від щита до коробки спільні з іншими точками групи.</p></details>";
+  }
+  var bigSch = false;
+  function schWrap(title, inner) {
+    return (bigSch ? '<div class="pl-sch-back" data-act="schbig"></div>' : "") + '<details class="pl-path pl-sch' + (bigSch ? " big" : "") + '" open><summary>' + title + '</summary><button type="button" class="btn ghost small pl-schbtn" data-act="schbig">' + (bigSch ? "✕ Закрити" : "⤢ Збільшити схему") + "</button>" + inner + "</details>";
+  }
+  function schemeHtml(t) {
+    var K = P.KINDS[t.kind];
+    if (K.cat === "light") return schWrap("⚡ Схема підключення", schemeSvg(t)) + wiresHtml(t);
+    if (K.cat === "switch") {
+      var ls = proj.points.filter(function (l) { return P.KINDS[l.kind].cat === "light" && (l.ctl || []).some(function (c) { return c.sw === t.id; }); });
+      var bySig = {}, reps = [];
+      ls.forEach(function (l) { var k = sigOf(l) + "#" + l.group; if (!bySig[k]) { bySig[k] = 1; reps.push(l); } });
+      if (!reps.length) return "";
+      return schWrap("⚡ Схема: що вмикає цей вимикач", reps.slice(0, 3).map(function (l) { return "<p class='meta'><b>" + esc(P.labelRef(proj, l.id)) + "</b></p>" + schemeSvg(l, t.id); }).join(""));
+    }
+    return "";
+  }
   function pathHtml(t) {
     var segs = calc().segs, cp = cablePath(t.id, segs);
     if (!cp.up.length && !cp.down.length) return "";
@@ -530,7 +692,7 @@
     // кабель до точки
     var seg = c.segs.filter(function (s) { return s.b === t.id; })[0];
     if (seg) h += "<h4>Кабель до точки</h4><p>Від «" + esc(P.labelRef(proj, seg.a)) + "»: <b>" + seg.cable + "</b>, " + P.nf(seg.len / 100) + " м</p>" + planeSel(seg);
-    h += pathHtml(t) + connHtml(t) + hint(hintKey(t)) + (function () { var rr = P.byId(proj.rooms, t.room); return rr && (rr.type === "bath" || rr.type === "wc") ? hint("bath") : ""; })() + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
+    h += schemeHtml(t) + pathHtml(t) + connHtml(t) + hint(hintKey(t)) + (function () { var rr = P.byId(proj.rooms, t.room); return rr && (rr.type === "bath" || rr.type === "wc") ? hint("bath") : ""; })() + (seg ? hint(seg.plane) : "") + '<div class="row"><button type="button" class="btn ghost small pl-danger" data-act="delpt" data-id="' + t.id + '">Видалити точку</button></div></div>';
     return h;
   }
   function hintKey(t) { return t.kind; }
@@ -736,6 +898,7 @@
     if (b.dataset.wall) { ui.wall = b.dataset.wall; save(); draw(); return; }
     var a = b.dataset.act, id = b.dataset.id;
     if (a === "live") { live.on = !live.on; if (live.on) { live.sw = {}; live.brk = {}; ui.tool = "select"; } draw(); return; }
+    if (a === "schbig") { bigSch = !bigSch; draw(); return; }
     if (a === "lsw") { var lk = id + ":" + b.dataset.v; live.sw[lk] = live.sw[lk] ? 0 : 1; draw(); return; }
     if (a === "lbrk") { live.brk[id] = isOn(id) ? 0 : 1; draw(); return; }
     if (a === "ltest") { live.brk[id] = 0; live.msg = b.dataset.v === "rcbo" ? "Диф. автомат спрацював від кнопки «ТЕСТ» — механізм справний. Увімкни його знову." : "ПЗВ спрацював від кнопки «ТЕСТ» — механізм справний. Усе під ним знеструмлено. Увімкни ПЗВ знову."; draw(); return; }
